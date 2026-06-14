@@ -19,6 +19,7 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   // Remember the position at the moment we started playback (or the region start).
   // On pause we seek back there. This gives "restart the clip from where we began this play session".
   const lastPlayPositionRef = useRef<number | null>(null)
+  const lastToggleTimeRef = useRef(0)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -112,6 +113,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
       setIsPlaying(false)
       lastPlayPositionRef.current = null
     })
+    // Extra safety: if for some reason state desyncs on mobile (rapid interaction, regions, iOS audio policy),
+    // the next user toggle will force the correct action and state (see togglePlay)
 
     // Region loop support — use ref so toggling loop doesn't recreate the whole wavesurfer.
     regions.on('region-out', (region: any) => {
@@ -149,19 +152,26 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     const ws = wsRef.current
     if (!ws) return
 
+    // Debounce rapid taps on mobile to avoid race conditions and stuck states
+    const now = Date.now()
+    if (now - lastToggleTimeRef.current < 250) return
+    lastToggleTimeRef.current = now
+
+    // Force decision based on our flag, but always apply action and sync state immediately
+    // to avoid desync (common on iOS with rapid taps/seeks/regions)
     if (isPlaying) {
-      ws.pause()
-      // On user-initiated pause: return the cursor to where this playback session started.
-      // For a region this means the region start (great for repeating a clip cleanly).
-      // For full audio it means the position you were at when you hit play.
+      try { ws.pause() } catch {}
       const startPos = lastPlayPositionRef.current ?? 0
-      ws.seekTo(startPos / (duration || 1))
-      setCurrentTime(startPos)
+      try {
+        ws.seekTo(startPos / (duration || 1))
+        setCurrentTime(startPos)
+      } catch {}
       lastPlayPositionRef.current = null
+      setIsPlaying(false)
       return
     }
 
-    // Remember where we are right now — this becomes the "previous position" for the pause-to-rewind behavior.
+    // starting new playback session: remember current pos (will be overridden for region)
     lastPlayPositionRef.current = ws.getCurrentTime()
 
     // If a region is selected, the main play button plays the selected region
@@ -172,15 +182,23 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
       const all = regions.getRegions ? regions.getRegions() : []
       const last = all.length > 0 ? all[all.length - 1] : null
       if (last && last.play) {
-        // For region playback, the "start of this session" is the region start.
         lastPlayPositionRef.current = last.start
-        last.play()
-        setIsPlaying(true)
+        try {
+          last.play()
+          setIsPlaying(true)
+        } catch {
+          setIsPlaying(false)
+        }
         return
       }
     }
 
-    ws.play()
+    try {
+      ws.play()
+      setIsPlaying(true)
+    } catch {
+      setIsPlaying(false)
+    }
   }
 
   const seekTo = (time: number) => {
@@ -279,9 +297,10 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
       {/* Elongated visual player area */}
       <div
+        id="english-player-container"
         ref={containerRef}
         className="w-full overflow-hidden rounded-xl border border-indigo-200 bg-white shadow-inner"
-        style={{ minHeight: usingFallback ? 72 : 88 }}
+        style={{ minHeight: usingFallback ? 72 : 88, touchAction: "manipulation" }}
       />
 
       {!usingFallback && !audioUrl && (

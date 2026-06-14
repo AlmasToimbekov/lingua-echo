@@ -663,9 +663,10 @@ export default function LinguaEcho() {
 
             {/* THE MAIN CONTAINER — bilingual + dual audio as requested */}
             <div 
-              className="rounded-3xl border border-zinc-200 bg-white p-6 pl-14 pr-14 shadow-sm sm:p-8 sm:pl-8 sm:pr-8 overflow-hidden"
+              className="main-content-area rounded-3xl border border-zinc-200 bg-white p-6 pl-14 pr-14 shadow-sm sm:p-8 sm:pl-8 sm:pr-8 overflow-hidden"
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
+              style={{ touchAction: 'pan-y' }}
             >
             {/* Compact navigator: counter + folder badge + list toggle (makes sidebar collapsible on small screens). Side arrows and swipe handle the actual switching. */}
             <div className="mb-4 flex items-center justify-between gap-2 border-b border-zinc-100 pb-3">
