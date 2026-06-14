@@ -7,9 +7,10 @@ interface RussianAudioButtonProps {
   audioUrl?: string
   fallbackText: string
   onRegenerate?: () => void
+  compact?: boolean
 }
 
-export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate }: RussianAudioButtonProps) {
+export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate, compact = false }: RussianAudioButtonProps) {
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
 
@@ -58,32 +59,41 @@ export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate }: Rus
     setIsPlaying(false)
   }
 
+  const buttonClass = compact
+    ? "flex h-9 w-9 items-center justify-center rounded-xl border border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition active:scale-[0.985] hover:bg-sky-100"
+    : "flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition active:scale-[0.985] hover:bg-sky-100"
+  const iconSize = compact ? 16 : 28
+
   return (
-    <div className="flex flex-col items-center gap-2">
+    <div className={compact ? "flex items-center" : "flex flex-col items-center gap-2"}>
       <button
         onClick={isPlaying ? stop : play}
-        className="flex h-20 w-20 flex-col items-center justify-center gap-1 rounded-2xl border-2 border-sky-200 bg-sky-50 text-sky-700 shadow-sm transition active:scale-[0.985] hover:bg-sky-100"
+        className={buttonClass}
         aria-label={isPlaying ? 'Остановить русскую озвучку' : 'Озвучить по-русски'}
       >
         {isPlaying ? (
-          <Square size={28} />
+          <Square size={iconSize} />
         ) : (
-          <Volume2 size={28} />
+          <Volume2 size={iconSize} />
         )}
-        <span className="text-[10px] font-medium tracking-wider">РУССКАЯ</span>
+        {!compact && <span className="text-[10px] font-medium tracking-wider">РУССКАЯ</span>}
       </button>
 
-      <div className="text-center text-xs text-sky-700/80">
-        {isPlaying ? 'Играет...' : 'Play'}
-      </div>
+      {!compact && (
+        <>
+          <div className="text-center text-xs text-sky-700/80">
+            {isPlaying ? 'Играет...' : 'Play'}
+          </div>
 
-      {onRegenerate && (
-        <button
-          onClick={onRegenerate}
-          className="text-[10px] text-sky-600 underline underline-offset-2 hover:text-sky-800"
-        >
-          Перегенерировать
-        </button>
+          {onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="text-[10px] text-sky-600 underline underline-offset-2 hover:text-sky-800"
+            >
+              Перегенерировать
+            </button>
+          )}
+        </>
       )}
     </div>
   )

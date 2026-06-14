@@ -663,7 +663,7 @@ export default function LinguaEcho() {
 
             {/* THE MAIN CONTAINER — bilingual + dual audio as requested */}
             <div 
-              className="rounded-3xl border border-zinc-200 bg-white p-8 pl-20 pr-20 shadow-sm sm:pl-8 sm:pr-8"
+              className="rounded-3xl border border-zinc-200 bg-white p-6 pl-14 pr-14 shadow-sm sm:p-8 sm:pl-8 sm:pr-8 overflow-hidden"
               onTouchStart={handleTouchStart}
               onTouchEnd={handleTouchEnd}
             >
@@ -735,24 +735,23 @@ export default function LinguaEcho() {
           ) : (
             <>
               <div className="mb-1 text-[11px] font-medium uppercase tracking-[1.5px] text-indigo-600">АНГЛИЙСКИЙ</div>
-              <div className="text-balance text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950">
+              <div className="text-balance text-3xl sm:text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950 break-words">
                 {current.en}
               </div>
 
-              {/* Russian text + озвучка рядом — чтобы сразу было понятно, к чему кнопка относится (особенно в вертикальной ориентации) */}
-              <div className="mt-4 flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
+              {/* Russian label + small icon to the right of label, translation text below */}
+              <div className="mt-4">
+                <div className="flex items-center gap-2">
                   <div className="text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">РУССКИЙ ПЕРЕВОД</div>
-                  <div className="mt-1 text-2xl leading-snug text-zinc-700">
-                    {current.ru}
-                  </div>
-                </div>
-                <div className="flex-shrink-0 pt-1">
                   <RussianAudioButton
                     audioUrl={current.ruAudioUrl}
                     fallbackText={current.ru}
                     onRegenerate={() => handleRegenerateAudio(current.id)}
+                    compact
                   />
+                </div>
+                <div className="mt-1 text-xl sm:text-2xl leading-snug text-zinc-700 break-words">
+                  {current.ru}
                 </div>
               </div>
 
