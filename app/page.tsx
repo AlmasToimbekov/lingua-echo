@@ -45,7 +45,7 @@ export default function LinguaEcho() {
   const [genTopic, setGenTopic] = useState('Семья')
   const [genCustomTopic, setGenCustomTopic] = useState('')
   const [genComplexity, setGenComplexity] = useState(1)
-  const [genCount, setGenCount] = useState(12)
+  const [genCount, setGenCount] = useState(8)
   const [isGenerating, setIsGenerating] = useState(false)
 
   // Load on mount + persist
@@ -129,7 +129,7 @@ export default function LinguaEcho() {
 
     const topic = genCustomTopic.trim() || genTopic
     const maxWords = COMPLEXITIES[genComplexity].maxWords
-    const count = Math.min(Math.max(5, genCount), 20)
+    const count = Math.min(Math.max(1, genCount), 20)
 
     try {
       // 1. Gemini for the text templates (key required)
@@ -438,7 +438,7 @@ export default function LinguaEcho() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsGenerateOpen(false)}>
           <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="text-xl font-semibold tracking-tight">Сгенерировать шаблоны с ИИ</div>
-            <p className="mt-1 text-sm text-zinc-600">15–20 естественных фраз. Высокая частотность, американский английский. Требуется ключ Google Gemini.</p>
+            <p className="mt-1 text-sm text-zinc-600">От 1 до 20 естественных фраз. Высокая частотность, американский английский. Требуется ключ Google Gemini.</p>
 
             <div className="mt-6 space-y-6">
               {/* Topic */}
@@ -477,7 +477,7 @@ export default function LinguaEcho() {
                   <span>Количество шаблонов</span>
                   <span>{genCount}</span>
                 </div>
-                <input type="range" min={8} max={20} step={1} value={genCount} onChange={e => setGenCount(parseInt(e.target.value))} className="w-full accent-indigo-600" />
+                <input type="range" min={1} max={20} step={1} value={genCount} onChange={e => setGenCount(parseInt(e.target.value))} className="w-full accent-indigo-600" />
               </div>
             </div>
 

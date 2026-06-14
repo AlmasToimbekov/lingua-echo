@@ -13,15 +13,27 @@ export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate }: Rus
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
 
+  // When the template changes (new audioUrl prop), stop any previous playback
+  // and clear the ref so the next play() will use the correct URL.
+  React.useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current = null
+    }
+    setIsPlaying(false)
+  }, [audioUrl])
+
   const play = () => {
     if (audioUrl) {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(audioUrl)
-        audioRef.current.onended = () => setIsPlaying(false)
+      // Always create a fresh Audio with the current audioUrl.
+      // This fixes the bug where switching templates would still play the old recording.
+      if (audioRef.current) {
+        audioRef.current.pause()
       }
-      audioRef.current.play()
-      setIsPlaying(true)
+      audioRef.current = new Audio(audioUrl)
       audioRef.current.onended = () => setIsPlaying(false)
+      audioRef.current.play().catch(() => {})
+      setIsPlaying(true)
     } else {
       // Fallback browser synthesis (Russian)
       if (!('speechSynthesis' in window)) return
@@ -38,6 +50,7 @@ export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate }: Rus
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
+      audioRef.current = null
     }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
