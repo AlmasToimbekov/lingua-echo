@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
-import { Play, Pause, RotateCcw, Trash2 } from 'lucide-react'
+import { Play, Pause, Trash2 } from 'lucide-react'
 
 interface EnglishPlayerProps {
   audioUrl?: string
@@ -15,6 +15,10 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   const containerRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WaveSurfer | null>(null)
   const regionsRef = useRef<any>(null)
+
+  // Remember the position at the moment we started playback (or the region start).
+  // On pause we seek back there. This gives "restart the clip from where we began this play session".
+  const lastPlayPositionRef = useRef<number | null>(null)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -105,6 +109,7 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     ws.on('pause', () => setIsPlaying(false))
     ws.on('finish', () => {
       setIsPlaying(false)
+      lastPlayPositionRef.current = null
     })
 
     // Region loop support — use ref so toggling loop doesn't recreate the whole wavesurfer.
@@ -142,7 +147,39 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
     const ws = wsRef.current
     if (!ws) return
-    ws.playPause()
+
+    if (isPlaying) {
+      ws.pause()
+      // On user-initiated pause: return the cursor to where this playback session started.
+      // For a region this means the region start (great for repeating a clip cleanly).
+      // For full audio it means the position you were at when you hit play.
+      const startPos = lastPlayPositionRef.current ?? 0
+      ws.seekTo(startPos / (duration || 1))
+      setCurrentTime(startPos)
+      lastPlayPositionRef.current = null
+      return
+    }
+
+    // Remember where we are right now — this becomes the "previous position" for the pause-to-rewind behavior.
+    lastPlayPositionRef.current = ws.getCurrentTime()
+
+    // If a region is selected, the main play button plays the selected region
+    // (instead of the whole audio). User can clear the region with trash if they
+    // want to play the full phrase.
+    const regions = regionsRef.current
+    if (regions && hasRegion) {
+      const all = regions.getRegions ? regions.getRegions() : []
+      const last = all.length > 0 ? all[all.length - 1] : null
+      if (last && last.play) {
+        // For region playback, the "start of this session" is the region start.
+        lastPlayPositionRef.current = last.start
+        last.play()
+        setIsPlaying(true)
+        return
+      }
+    }
+
+    ws.play()
   }
 
   const seekTo = (time: number) => {
@@ -185,19 +222,6 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     }
   }
 
-  const playRegion = () => {
-    const regions = regionsRef.current
-    if (regions) {
-      // Get the most recently added region (simple & reliable across versions)
-      const all = regions.getRegions ? regions.getRegions() : []
-      const last = all.length > 0 ? all[all.length - 1] : null
-      if (last && last.play) {
-        last.play()
-        setIsPlaying(true)
-      }
-    }
-  }
-
   const toggleLoop = () => {
     const newLoop = !isLooping
     setIsLooping(newLoop)
@@ -233,17 +257,6 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
       drag: true,
     })
     setHasRegion(true)
-  }
-
-  const resetPlayback = () => {
-    const ws = wsRef.current
-    if (ws) {
-      ws.pause()
-      ws.seekTo(0)
-      setCurrentTime(0)
-      setIsPlaying(false)
-    }
-    stopFallback()
   }
 
   const formatTime = (t: number) => {
@@ -339,14 +352,6 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
             </div>
 
             <button
-              onClick={playRegion}
-              disabled={!hasRegion}
-              className="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-medium hover:bg-indigo-50 disabled:opacity-40"
-            >
-              Играть выделенное
-            </button>
-
-            <button
               onClick={toggleLoop}
               disabled={!hasRegion}
               className={`rounded-lg border px-4 py-2 text-sm font-medium ${isLooping ? 'border-emerald-400 bg-emerald-50 text-emerald-700' : 'border-indigo-200 hover:bg-indigo-50'} disabled:opacity-40`}
@@ -366,14 +371,6 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
             </button>
           </>
         )}
-
-        <button
-          onClick={resetPlayback}
-          className="ml-auto rounded-lg p-2 text-zinc-500 hover:bg-zinc-100"
-          title="Сбросить"
-        >
-          <RotateCcw size={18} />
-        </button>
 
         {onRegenerate && (
           <button

@@ -247,19 +247,6 @@ export default function LinguaEcho() {
     toast.success('Шаблон удалён')
   }
 
-  const resetToSeeds = () => {
-    revokeUnusedAudioUrls(templates, [])
-    // Clear any persisted audio for the templates we're discarding (Phase 2)
-    Promise.all(templates.map(t => deleteAudioForTemplate(t.id))).catch(() => {})
-
-    // По умолчанию возвращаем только 2 (как просил пользователь)
-    const seeded = SEED_TEMPLATES.slice(0, 2).map(t => ({ ...t, folder: '' }))
-    setTemplates(seeded)
-    setCurrentId(seeded[0].id)
-    saveTemplates(seeded)
-    toast('Шаблоны сброшены к исходным (2 шт.)')
-  }
-
   // Very simple settings persistence
   const saveSettings = (newSettings: Settings) => {
     setSettings(newSettings)
@@ -438,14 +425,6 @@ export default function LinguaEcho() {
               aria-label="Настройки"
             >
               <Settings size={16} className="sm:size-[18px]" />
-            </button>
-
-            <button
-              onClick={resetToSeeds}
-              className="flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-1 text-[10px] hover:bg-zinc-100 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs"
-              title="Сбросить к исходным шаблонам (2 по умолчанию)"
-            >
-              <RotateCcw size={12} className="sm:size-[14px]" /> Сбросить
             </button>
           </div>
         </div>
