@@ -19,6 +19,7 @@ import { EnglishPlayer } from '../components/EnglishPlayer'
 import { RussianAudioButton } from '../components/RussianAudioButton'
 
 const SETTINGS_KEY = 'lingua-echo:settings'
+const UI_STATE_KEY = 'lingua-echo:ui'
 
 type Settings = {
   geminiKey: string   // required for AI template generation (Google Gemini free tier)
@@ -42,6 +43,20 @@ const COMPLEXITIES = [
 ]
 
 export default function LinguaEcho() {
+  // Load persisted UI state early (custom topic, last folder and current template)
+  let initialGenCustomTopic = ''
+  let initialActiveFolder = ''
+  let initialLastCurrentId = ''
+  try {
+    const raw = localStorage.getItem(UI_STATE_KEY)
+    if (raw) {
+      const p = JSON.parse(raw)
+      initialGenCustomTopic = p.genCustomTopic || ''
+      initialActiveFolder = p.activeFolder || ''
+      initialLastCurrentId = p.lastCurrentId || ''
+    }
+  } catch {}
+
   const [templates, setTemplates] = useState<Template[]>([])
   const [currentId, setCurrentId] = useState<string>('')
   const [settings, setSettings] = useState<Settings>({ geminiKey: '', elevenKey: '' })
@@ -50,7 +65,7 @@ export default function LinguaEcho() {
 
   // Folders + mobile list visibility (new for responsive + organization)
   const [showList, setShowList] = useState(true)
-  const [activeFolder, setActiveFolder] = useState<string>('') // '' = Активные (non-learned), 'learned', or custom folder name
+  const [activeFolder, setActiveFolder] = useState<string>(initialActiveFolder) // '' = Активные (non-learned), 'learned', or custom folder name
   const [isMoveOpen, setIsMoveOpen] = useState(false)
   const [customFolders, setCustomFolders] = useState<string[]>([])
   const [isFoldersManageOpen, setIsFoldersManageOpen] = useState(false)
@@ -123,7 +138,7 @@ export default function LinguaEcho() {
 
   // Generate form state
   const [genTopic, setGenTopic] = useState('Семья')
-  const [genCustomTopic, setGenCustomTopic] = useState('')
+  const [genCustomTopic, setGenCustomTopic] = useState(initialGenCustomTopic)
   const [genComplexity, setGenComplexity] = useState(1)
   const [genCount, setGenCount] = useState(8)
   const [genIsAdult, setGenIsAdult] = useState(false)
@@ -172,12 +187,14 @@ export default function LinguaEcho() {
       // Normalize folder for old data (backward compat) + ensure new shape
       const withFolder = saved.map((t) => ({ ...t, folder: t.folder || '' }))
       let initial: Template[]
+      let candidates: any[] = []
 
       if (withFolder.length > 0) {
         // Restore texts from localStorage, then hydrate audio from IndexedDB
         initial = await hydrateTemplates(withFolder)
         setTemplates(initial)
         setCurrentId(initial[0]?.id ?? '')
+        candidates = initial
       } else {
         // По умолчанию показываем только 2 шаблона (пользователь попросил не перегружать 10-ю)
         const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
@@ -185,6 +202,18 @@ export default function LinguaEcho() {
         setTemplates(seeded)
         setCurrentId(seeded[0].id)
         saveTemplates(seeded)
+        candidates = seeded
+      }
+
+      // Restore last viewed folder and template (if still exists)
+      if (initialActiveFolder) {
+        setActiveFolder(initialActiveFolder)
+      }
+      if (initialLastCurrentId) {
+        const exists = candidates.some((t: any) => t.id === initialLastCurrentId)
+        if (exists) {
+          setCurrentId(initialLastCurrentId)
+        }
       }
 
       // Load settings (support old shape for migration)
@@ -234,6 +263,28 @@ export default function LinguaEcho() {
       saveCustomFolders(merged)
     }
   }, [templates])
+
+  // Persist custom topic and last folder/template across reloads
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, genCustomTopic }))
+    } catch {}
+  }, [genCustomTopic])
+
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, activeFolder }))
+    } catch {}
+  }, [activeFolder])
+
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, lastCurrentId: currentId }))
+    } catch {}
+  }, [currentId])
 
   const current = templates.find(t => t.id === currentId) || templates[0]
 
