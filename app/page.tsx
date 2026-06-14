@@ -86,7 +86,8 @@ export default function LinguaEcho() {
         setTemplates(initial)
         setCurrentId(initial[0]?.id ?? '')
       } else {
-        const seeded = SEED_TEMPLATES.map((t) => ({ ...t }))
+        // По умолчанию показываем только 2 шаблона (пользователь попросил не перегружать 10-ю)
+        const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t }))
         // Seeds have no audio yet
         setTemplates(seeded)
         setCurrentId(seeded[0].id)
@@ -141,11 +142,12 @@ export default function LinguaEcho() {
     // Clear any persisted audio for the templates we're discarding (Phase 2)
     Promise.all(templates.map(t => deleteAudioForTemplate(t.id))).catch(() => {})
 
-    const seeded = SEED_TEMPLATES.map(t => ({ ...t }))
+    // По умолчанию возвращаем только 2 (как просил пользователь)
+    const seeded = SEED_TEMPLATES.slice(0, 2).map(t => ({ ...t }))
     setTemplates(seeded)
     setCurrentId(seeded[0].id)
     saveTemplates(seeded)
-    toast('Шаблоны сброшены к исходным')
+    toast('Шаблоны сброшены к исходным (2 шт.)')
   }
 
   // Very simple settings persistence
@@ -265,7 +267,33 @@ export default function LinguaEcho() {
   }
 
   if (!current) {
-    return <div className="p-8">Загрузка...</div>
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center p-8 text-center">
+        <div className="mb-4 text-2xl">Нет шаблонов</div>
+        <p className="mb-6 max-w-md text-zinc-600">
+          Вы удалили все шаблоны. Добавьте новые через кнопку «Сгенерировать шаблоны» или сбросьте к исходным.
+        </p>
+        <div className="flex gap-3">
+          <button
+            onClick={() => {
+              const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t }))
+              setTemplates(seeded)
+              setCurrentId(seeded[0].id)
+              saveTemplates(seeded)
+            }}
+            className="rounded-xl bg-indigo-600 px-5 py-2 text-white"
+          >
+            Вернуть 2 исходных
+          </button>
+          <button
+            onClick={() => setIsGenerateOpen(true)}
+            className="rounded-xl border px-5 py-2"
+          >
+            Сгенерировать
+          </button>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -301,7 +329,7 @@ export default function LinguaEcho() {
             <button
               onClick={resetToSeeds}
               className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-2 text-xs hover:bg-zinc-100"
-              title="Сбросить к 10 исходным шаблонам"
+              title="Сбросить к исходным шаблонам (2 по умолчанию)"
             >
               <RotateCcw size={14} /> Сбросить
             </button>
@@ -316,7 +344,7 @@ export default function LinguaEcho() {
           <div className="w-72 flex-shrink-0">
             <div className="mb-2 flex items-center justify-between text-sm font-medium text-zinc-600">
               <span>Мои шаблоны ({templates.length})</span>
-              <button onClick={resetToSeeds} className="text-xs text-zinc-500 hover:text-zinc-700">Сбросить</button>
+              <button onClick={resetToSeeds} className="text-xs text-zinc-500 hover:text-zinc-700">Сбросить (к 2)</button>
             </div>
 
             <div className="max-h-[68vh] overflow-y-auto pr-1 space-y-1.5 border-r border-zinc-200">
@@ -410,10 +438,6 @@ export default function LinguaEcho() {
             </button>
 
             <div className="flex-1" />
-
-            <div className="text-xs text-zinc-400 self-center">
-              Полезно для ребёнка: можно выделить часть фразы и зациклить на медленной скорости
-            </div>
           </div>
         </div> {/* end of main container card */}
           </div> {/* end of viewer flex-1 */}

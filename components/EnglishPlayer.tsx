@@ -24,6 +24,13 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   const [isLooping, setIsLooping] = useState(false)
   const [usingFallback, setUsingFallback] = useState(false)
 
+  // Use a ref so the region-out listener always sees the latest loop state
+  // without causing the entire wavesurfer instance to be re-created on every toggle.
+  const isLoopingRef = useRef(isLooping)
+  useEffect(() => {
+    isLoopingRef.current = isLooping
+  }, [isLooping])
+
   // Fallback using Web Speech API (for seeds before keys / audio generated)
   const speakFallback = useCallback((rate = 1) => {
     if (!('speechSynthesis' in window)) return
@@ -45,13 +52,14 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
   // Main wavesurfer setup (only when we have real audioUrl)
   useEffect(() => {
+    // Always destroy any previous instance first (prevents double-destroy / stale ws errors in dev + strict mode).
+    if (wsRef.current) {
+      try { wsRef.current.destroy() } catch {}
+      wsRef.current = null
+      regionsRef.current = null
+    }
+
     if (!audioUrl || !containerRef.current) {
-      // cleanup previous
-      if (wsRef.current) {
-        wsRef.current.destroy()
-        wsRef.current = null
-        regionsRef.current = null
-      }
       setUsingFallback(true)
       return
     }
@@ -66,18 +74,24 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
       barWidth: 2.5,
       barGap: 1.5,
       cursorColor: '#312e81',
-      dragToSeek: true,
+      dragToSeek: false,
       minPxPerSec: 40,
     })
 
     wsRef.current = ws
 
-    // Register regions plugin. Drag-to-create regions is supported by default in recent versions.
-    // We create regions programmatically or via user drag on the waveform.
-    const regions = ws.registerPlugin(RegionsPlugin.create())
+    const regions = ws.registerPlugin(
+      (RegionsPlugin as any).create({
+        dragSelection: true,
+        color: 'rgba(99, 102, 241, 0.4)',
+      })
+    )
     regionsRef.current = regions
 
-    ws.load(audioUrl)
+    ws.load(audioUrl).catch((err: any) => {
+      if (err && (err.name === 'AbortError' || /aborted|signal/i.test(String(err)))) return
+      console.warn('WaveSurfer load:', err)
+    })
 
     ws.on('ready', () => {
       setDuration(ws.getDuration())
@@ -91,25 +105,30 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     ws.on('pause', () => setIsPlaying(false))
     ws.on('finish', () => {
       setIsPlaying(false)
-      // Looping is handled by the region-out listener below
     })
 
-    // Region loop support
+    // Region loop support — use ref so toggling loop doesn't recreate the whole wavesurfer.
     regions.on('region-out', (region: any) => {
-      if (isLooping) {
+      if (isLoopingRef.current) {
         region.play()
       }
     })
 
-    regions.on('region-created', () => setHasRegion(true))
+    regions.on('region-created', (region: any) => {
+      setHasRegion(true)
+      if (region) { try { region.drag = true; region.resize = true } catch {} }
+    })
     regions.on('region-removed', () => setHasRegion(false))
 
     return () => {
-      ws.destroy()
-      wsRef.current = null
-      regionsRef.current = null
+      // Safe cleanup: only destroy if this instance is still the current one.
+      if (wsRef.current === ws) {
+        try { ws.destroy() } catch {}
+        wsRef.current = null
+        regionsRef.current = null
+      }
     }
-  }, [audioUrl, isLooping])
+  }, [audioUrl])
 
   const togglePlay = () => {
     if (usingFallback) {
@@ -195,6 +214,27 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     }
   }
 
+  const addRegionFirstSeconds = (secs: number) => {
+    const ws = wsRef.current
+    const regs = regionsRef.current
+    if (!ws || !regs || !duration) return
+
+    const start = 0
+    const end = Math.min(secs, duration)
+
+    const existing = regs.getRegions ? regs.getRegions() : []
+    existing.forEach((r: any) => r.remove && r.remove())
+
+    regs.addRegion({
+      start,
+      end,
+      color: 'rgba(99, 102, 241, 0.45)',
+      resize: true,
+      drag: true,
+    })
+    setHasRegion(true)
+  }
+
   const resetPlayback = () => {
     const ws = wsRef.current
     if (ws) {
@@ -273,13 +313,13 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
           ))}
         </div>
 
-        {/* Speed controls - very useful for language learning */}
-        <div className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white p-1 text-sm">
+        {/* Speed controls - enlarged for children (bigger tap targets) */}
+        <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white p-1.5 text-sm">
           {[0.6, 0.75, 1, 1.25, 1.4].map((r) => (
             <button
               key={r}
               onClick={() => changeRate(r)}
-              className={`rounded-md px-2.5 py-1 transition ${playbackRate === r ? 'bg-indigo-600 text-white' : 'hover:bg-indigo-100'}`}
+              className={`rounded-lg px-3 py-1.5 min-w-[48px] transition active:scale-95 ${playbackRate === r ? 'bg-indigo-600 text-white shadow' : 'hover:bg-indigo-100'}`}
             >
               {r}×
             </button>
@@ -289,6 +329,15 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
         {/* Region / loop controls for selecting part of phrase */}
         {!usingFallback && (
           <>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => addRegionFirstSeconds(0.5)}
+                className="rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-medium hover:bg-indigo-50"
+              >
+                Выделить первые 0,5с
+              </button>
+            </div>
+
             <button
               onClick={playRegion}
               disabled={!hasRegion}
@@ -304,6 +353,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
             >
               {isLooping ? 'Зациклено' : 'Зациклить выделенное'}
             </button>
+
+            {/* The drag on waveform should also create regions (dragSelection: true), but these buttons are reliable one-tap options for children. */}
 
             <button
               onClick={clearRegion}
@@ -337,7 +388,7 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
       <p className="mt-1 text-[11px] text-zinc-500">
         {usingFallback
           ? 'Демо-озвучка браузером. Добавьте ключ ElevenLabs для естественной речи (и Gemini — для генерации шаблонов).'
-          : 'Перетаскивайте по волне или используйте кнопки -1s/-3s/-5s / |<< для точного контроля. Выделяйте регионы для зацикливания.'}
+          : 'Клик по волне — переместить позицию. Кнопки -1s/-3s/|<< — точный контроль. Для детей: «Выделить первые 0,5с» создаёт видимый регион в начале, потом тяните края/весь регион мышкой и зацикливайте на 0.75×.'}
       </p>
     </div>
   )
