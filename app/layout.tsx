@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "LinguaEcho — Английский для семьи и детей",
-  description: "Простое приложение для практики английского с естественной озвучкой. 10 готовых шаблонов + генерация новых с помощью вашего ключа Grok (xAI).",
+  description: "Простое приложение для практики английского с естественной озвучкой. Шаблоны + генерация новых с помощью вашего ключа Google Gemini. Голоса через ElevenLabs или браузер.",
   icons: { icon: "/favicon.ico" },
 };
 
