@@ -1,33 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LinguaEcho
 
-## Getting Started
+Простое приложение для изучения английского языка всей семьёй (в первую очередь — для детей).
 
-First, run the development server:
+## MVP возможности
+
+- 10 готовых высококачественных шаблонов при первом запуске.
+- Большой контейнер: английский текст (крупно) + русский перевод.
+- **Английский плеер** (слева, удлинённый): waveform (wavesurfer), точная прокрутка, выделение любой части фразы, зацикливание выделенного, выбор скорости (0.6×–1.4×). Идеально для отработки.
+- **Русская озвучка** (справа): одна большая кнопка — без лишних элементов.
+- Генерация 8–20 новых шаблонов с помощью **вашего ключа Grok (xAI)**:
+  - Выбор темы + уровень сложности (короткие / средние / до 20 слов).
+  - Естественный американский английский + высокая частотность.
+  - Озвучка тоже через xAI TTS (живые голоса + поддержка просодии).
+- Полностью работает без ключей (браузерная синтезация как демо).
+- Всё хранится только в браузере (localStorage). Никаких аккаунтов в MVP.
+
+## Быстрый старт
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Поиграйте с готовыми шаблонами (переключайте, удаляйте, выделяйте части фразы в английском плеере).
+2. Нажмите шестерёнку → вставьте ваш xAI API ключ (https://console.x.ai/).
+3. Нажмите «Сгенерировать с Grok» — получите новые естественные фразы с настоящей озвучкой.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Ключи
 
-## Learn More
+- Основной и рекомендуемый путь — **xAI** (один ключ для генерации текстов + озвучки).
+- При желании можно использовать ElevenLabs (добавьте поддержку в `lib/tts.ts`).
+- Ключи хранятся только локально.
 
-To learn more about Next.js, take a look at the following resources:
+## Архитектура на будущее (учтено в коде)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Backend + Google OAuth
+- Хранение изученных шаблонов и прогресса пользователя
+- Голосовое описание запроса + клонирование голоса (xAI уже поддерживает)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+См. подробный план в `.grok/sessions/.../plan.md` (внутри сессии Grok Build).
+
+## Разработка
+
+```bash
+npm run build   # проверить production сборку
+```
+
+Проект сделан минималистично, с акцентом на удобство ребёнка (крупный текст, простые кнопки, возможность зацикливать короткие кусочки на медленной скорости).
 
 ## Deploy on Vercel
 
