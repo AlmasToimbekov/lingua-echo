@@ -6,6 +6,13 @@ import { toast } from 'sonner'
 import { Template } from '../lib/types'
 import { SEED_TEMPLATES } from '../lib/seed'
 import { loadTemplates, saveTemplates, revokeUnusedAudioUrls } from '../lib/storage'
+import {
+  saveAudioBuffer,
+  loadAudioBuffer,
+  deleteAudioForTemplate,
+  clearAllAudio,
+  createObjectUrlFromBuffer,
+} from '../lib/audioStorage'
 import { generateAudio } from '../lib/tts'
 import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
@@ -48,30 +55,56 @@ export default function LinguaEcho() {
   const [genCount, setGenCount] = useState(8)
   const [isGenerating, setIsGenerating] = useState(false)
 
-  // Load on mount + persist
-  useEffect(() => {
-    const saved = loadTemplates()
-    if (saved.length > 0) {
-      setTemplates(saved)
-      setCurrentId(saved[0].id)
-    } else {
-      const seeded = SEED_TEMPLATES.map(t => ({ ...t }))
-      setTemplates(seeded)
-      setCurrentId(seeded[0].id)
-      saveTemplates(seeded)
-    }
+  // Hydrate a list of templates with fresh audio object URLs from IndexedDB (if we have stored buffers).
+  // This is the key change that makes generated voices survive page refresh.
+  async function hydrateTemplates(base: Template[]): Promise<Template[]> {
+    return Promise.all(
+      base.map(async (t) => {
+        const [enLoaded, ruLoaded] = await Promise.all([
+          loadAudioBuffer(t.id, 'en'),
+          loadAudioBuffer(t.id, 'ru'),
+        ])
 
-    // Load settings (support old shape for migration)
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY)
-      if (raw) {
-        const parsed = JSON.parse(raw)
-        setSettings({
-          geminiKey: parsed.geminiKey || parsed.xaiKey || '',
-          elevenKey: parsed.elevenKey || ''
-        })
+        return {
+          ...t,
+          enAudioUrl: createObjectUrlFromBuffer(enLoaded) ?? t.enAudioUrl,
+          ruAudioUrl: createObjectUrlFromBuffer(ruLoaded) ?? t.ruAudioUrl,
+        }
+      })
+    )
+  }
+
+  // Load on mount + persist (now with audio hydration)
+  useEffect(() => {
+    ;(async () => {
+      const saved = loadTemplates()
+      let initial: Template[]
+
+      if (saved.length > 0) {
+        // Restore texts from localStorage, then hydrate audio from IndexedDB
+        initial = await hydrateTemplates(saved)
+        setTemplates(initial)
+        setCurrentId(initial[0]?.id ?? '')
+      } else {
+        const seeded = SEED_TEMPLATES.map((t) => ({ ...t }))
+        // Seeds have no audio yet
+        setTemplates(seeded)
+        setCurrentId(seeded[0].id)
+        saveTemplates(seeded)
       }
-    } catch {}
+
+      // Load settings (support old shape for migration)
+      try {
+        const raw = localStorage.getItem(SETTINGS_KEY)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          setSettings({
+            geminiKey: parsed.geminiKey || parsed.xaiKey || '',
+            elevenKey: parsed.elevenKey || '',
+          })
+        }
+      } catch {}
+    })()
   }, [])
 
   // Auto-save templates
@@ -92,6 +125,9 @@ export default function LinguaEcho() {
     const remaining = templates.filter(t => t.id !== id)
     revokeUnusedAudioUrls([toDelete], remaining)
 
+    // Also delete the persisted audio bytes from IndexedDB (Phase 2)
+    deleteAudioForTemplate(id).catch(() => {})
+
     setTemplates(remaining)
 
     if (currentId === id) {
@@ -102,6 +138,9 @@ export default function LinguaEcho() {
 
   const resetToSeeds = () => {
     revokeUnusedAudioUrls(templates, [])
+    // Clear any persisted audio for the templates we're discarding (Phase 2)
+    Promise.all(templates.map(t => deleteAudioForTemplate(t.id))).catch(() => {})
+
     const seeded = SEED_TEMPLATES.map(t => ({ ...t }))
     setTemplates(seeded)
     setCurrentId(seeded[0].id)
@@ -163,6 +202,16 @@ export default function LinguaEcho() {
         const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
         const ruAudioUrl = ruBlob ? URL.createObjectURL(ruBlob) : undefined
 
+        // Persist the actual audio bytes so they survive page refresh (Phase 2)
+        if (enBlob) {
+          const enBuffer = await enBlob.arrayBuffer()
+          await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
+        }
+        if (ruBlob) {
+          const ruBuffer = await ruBlob.arrayBuffer()
+          await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
+        }
+
         final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl })
       }
       toast.dismiss('gen-progress')
@@ -194,6 +243,16 @@ export default function LinguaEcho() {
 
       const newEnUrl = enBlob ? URL.createObjectURL(enBlob) : tpl.enAudioUrl
       const newRuUrl = ruBlob ? URL.createObjectURL(ruBlob) : tpl.ruAudioUrl
+
+      // Persist the new audio bytes (replaces previous stored version)
+      if (enBlob) {
+        const enBuffer = await enBlob.arrayBuffer()
+        await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
+      }
+      if (ruBlob) {
+        const ruBuffer = await ruBlob.arrayBuffer()
+        await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
+      }
 
       if (tpl.enAudioUrl && tpl.enAudioUrl !== newEnUrl) { try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {} }
       if (tpl.ruAudioUrl && tpl.ruAudioUrl !== newRuUrl) { try { URL.revokeObjectURL(tpl.ruAudioUrl) } catch {} }
