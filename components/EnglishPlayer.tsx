@@ -93,7 +93,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     regionsRef.current = regions
 
     ws.load(audioUrl).catch((err: any) => {
-      if (err && (err.name === 'AbortError' || /aborted|signal/i.test(String(err)))) return
+      const msg = String(err || '')
+      if (err && (err.name === 'AbortError' || /aborted|signal|fetch|Failed to fetch/i.test(msg))) return
       console.warn('WaveSurfer load:', err)
     })
 

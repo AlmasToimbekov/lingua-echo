@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Settings, Plus, RotateCcw, Trash2, X, ChevronLeft, ChevronRight, CheckCircle, Folder, Menu, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Template } from '../lib/types'
@@ -100,21 +100,18 @@ export default function LinguaEcho() {
     toast(`Папка «${name}» удалена${deleteContents ? ' (вместе с шаблонами)' : ', шаблоны перемещены в Активные'}`)
   }
 
-  const handleDeleteFolder = (name: string) => {
-    if (!confirm(`Удалить папку «${name}»?\n\nВы сможете выбрать, что делать с шаблонами внутри.`)) return
-    const deleteTemplates = confirm(
-      `Для папки «${name}»:\n\n` +
-      `OK — Удалить папку И ВСЕ шаблоны внутри (необратимо, аудио тоже будут удалены)\n\n` +
-      `Отмена — Удалить папку и ПЕРЕМЕСТИТЬ все шаблоны в «Активные» (безопасно, шаблоны сохранятся)`
-    )
-    deleteFolder(name, deleteTemplates)
-  }
-
   const openFolderNameModal = (title: string, initialValue: string, onConfirm: (name: string) => void) => {
     setFolderNameModalTitle(title)
     setFolderNameModalValue(initialValue)
     setFolderNameModalOnConfirm(() => onConfirm)
     setIsFolderNameModalOpen(true)
+  }
+
+  const openDeleteFolder = (name: string) => {
+    const count = templates.filter(t => t.folder === name).length
+    setDeleteFolderName(name)
+    setDeleteFolderTemplateCount(count)
+    setIsFolderDeleteModalOpen(true)
   }
 
   // Pure helper so we can compute filtered in handlers before state commits
@@ -137,6 +134,11 @@ export default function LinguaEcho() {
   const [folderNameModalTitle, setFolderNameModalTitle] = useState('')
   const [folderNameModalValue, setFolderNameModalValue] = useState('')
   const [folderNameModalOnConfirm, setFolderNameModalOnConfirm] = useState<((name: string) => void) | null>(null)
+
+  // Nice modal for folder deletion choice (replaces native confirm dialogs for delete)
+  const [isFolderDeleteModalOpen, setIsFolderDeleteModalOpen] = useState(false)
+  const [deleteFolderName, setDeleteFolderName] = useState('')
+  const [deleteFolderTemplateCount, setDeleteFolderTemplateCount] = useState(0)
 
   // Nice modal for editing template texts (replaces two native prompts)
   const [isEditTemplateOpen, setIsEditTemplateOpen] = useState(false)
@@ -252,6 +254,27 @@ export default function LinguaEcho() {
   const goNext = () => {
     const idx = filteredTemplates.findIndex(t => t.id === currentId)
     if (idx >= 0 && idx < filteredTemplates.length - 1) setCurrentId(filteredTemplates[idx + 1].id)
+  }
+
+  // Swipe support for template navigation (left = next, right = prev)
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null)
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY }
+  }
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStartRef.current) return
+    const t = e.changedTouches[0]
+    const deltaX = t.clientX - touchStartRef.current.x
+    const deltaY = t.clientY - touchStartRef.current.y
+    touchStartRef.current = null
+
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 60) {
+      if (deltaX > 0) goPrev()
+      else goNext()
+    }
   }
 
   // Unified folder setter (used by mark, move, dnd)
@@ -462,42 +485,71 @@ export default function LinguaEcho() {
                 const targetFolder = f === 'active' ? '' : f
                 const isCurrent = f === 'active' ? (activeFolder === '' || activeFolder === 'active') : activeFolder === f
                 const isCustom = f !== 'active' && f !== 'learned'
-                const chip = (
-                  <button
-                    onClick={() => {
-                      const target = f === 'active' ? '' : f
-                      setActiveFolder(target)
-                      // If the newly chosen folder doesn't contain the current template, auto-switch to first in that folder's list
-                      const wouldBe = getFilteredFor(target)
-                      if (wouldBe.length > 0 && !wouldBe.some(t => t.id === currentId)) {
-                        setCurrentId(wouldBe[0].id)
-                      }
-                    }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault()
-                      const draggedId = e.dataTransfer.getData('text/template-id')
-                      if (draggedId) {
-                        setTemplateFolder(draggedId, targetFolder)
-                        // Optionally follow the moved item
-                        if (activeFolder !== (targetFolder === '' ? '' : targetFolder)) {
-                          setActiveFolder(targetFolder === '' ? '' : targetFolder)
+
+                if (!isCustom) {
+                  return (
+                    <button
+                      key={f}
+                      onClick={() => {
+                        const target = f === 'active' ? '' : f
+                        setActiveFolder(target)
+                        // If the newly chosen folder doesn't contain the current template, auto-switch to first in that folder's list
+                        const wouldBe = getFilteredFor(target)
+                        if (wouldBe.length > 0 && !wouldBe.some(t => t.id === currentId)) {
+                          setCurrentId(wouldBe[0].id)
                         }
-                      }
-                    }}
-                    className={`shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap transition active:scale-95 ${isCurrent ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-zinc-200 bg-white hover:bg-zinc-50'}`}
-                  >
-                    {label}
-                  </button>
-                )
-                if (!isCustom) return chip
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        const draggedId = e.dataTransfer.getData('text/template-id')
+                        if (draggedId) {
+                          setTemplateFolder(draggedId, targetFolder)
+                          // Optionally follow the moved item
+                          if (activeFolder !== (targetFolder === '' ? '' : targetFolder)) {
+                            setActiveFolder(targetFolder === '' ? '' : targetFolder)
+                          }
+                        }
+                      }}
+                      className={`shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap transition active:scale-95 ${isCurrent ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-zinc-200 bg-white hover:bg-zinc-50'}`}
+                    >
+                      {label}
+                    </button>
+                  )
+                }
+
                 return (
                   <div key={f} className="flex items-center">
-                    {chip}
+                    <button
+                      onClick={() => {
+                        const target = f === 'active' ? '' : f
+                        setActiveFolder(target)
+                        // If the newly chosen folder doesn't contain the current template, auto-switch to first in that folder's list
+                        const wouldBe = getFilteredFor(target)
+                        if (wouldBe.length > 0 && !wouldBe.some(t => t.id === currentId)) {
+                          setCurrentId(wouldBe[0].id)
+                        }
+                      }}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        const draggedId = e.dataTransfer.getData('text/template-id')
+                        if (draggedId) {
+                          setTemplateFolder(draggedId, targetFolder)
+                          // Optionally follow the moved item
+                          if (activeFolder !== (targetFolder === '' ? '' : targetFolder)) {
+                            setActiveFolder(targetFolder === '' ? '' : targetFolder)
+                          }
+                        }
+                      }}
+                      className={`shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap transition active:scale-95 ${isCurrent ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-zinc-200 bg-white hover:bg-zinc-50'}`}
+                    >
+                      {label}
+                    </button>
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        handleDeleteFolder(f)
+                        openDeleteFolder(f)
                       }}
                       className="ml-0.5 text-red-400 hover:text-red-600 text-xs px-1"
                       title={`Удалить папку «${f}»`}
@@ -590,29 +642,34 @@ export default function LinguaEcho() {
 
           {/* Main viewer area (the container) */}
           {/* On mobile: exclusive with list — when showList=true we hide the detail so only left panel is visible */}
-          <div className={`flex-1 min-w-0 ${showList ? 'hidden lg:block' : 'block'}`}>
+          <div className={`flex-1 min-w-0 relative ${showList ? 'hidden lg:block' : 'block'}`}>
+            {/* Persistent side navigation buttons (easy thumb reach in center) */}
+            <button
+              onClick={goPrev}
+              disabled={filteredTemplates.findIndex(t => t.id === currentId) <= 0}
+              className="absolute left-1 top-1/2 -translate-y-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
+              aria-label="Предыдущий шаблон"
+            >
+              <ChevronLeft size={32} className="lg:size-[24px]" />
+            </button>
+            <button
+              onClick={goNext}
+              disabled={filteredTemplates.findIndex(t => t.id === currentId) >= filteredTemplates.length - 1}
+              className="absolute right-1 top-1/2 -translate-y-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
+              aria-label="Следующий шаблон"
+            >
+              <ChevronRight size={32} className="lg:size-[24px]" />
+            </button>
+
             {/* THE MAIN CONTAINER — bilingual + dual audio as requested */}
-            <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
-            {/* Compact navigator: prev/next for sequential practice (big tap targets for kids) + list toggle (makes sidebar collapsible on small screens) */}
+            <div 
+              className="rounded-3xl border border-zinc-200 bg-white p-8 pl-20 pr-20 shadow-sm sm:pl-8 sm:pr-8"
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
+            >
+            {/* Compact navigator: counter + folder badge + list toggle (makes sidebar collapsible on small screens). Side arrows and swipe handle the actual switching. */}
             <div className="mb-4 flex items-center justify-between gap-2 border-b border-zinc-100 pb-3">
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={goPrev}
-                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 active:scale-95"
-                  aria-label="Предыдущий шаблон"
-                  disabled={filteredTemplates.findIndex(t => t.id === currentId) <= 0}
-                >
-                  <ChevronLeft size={20} />
-                </button>
-                <button
-                  onClick={goNext}
-                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 active:scale-95"
-                  aria-label="Следующий шаблон"
-                  disabled={filteredTemplates.findIndex(t => t.id === currentId) >= filteredTemplates.length - 1}
-                >
-                  <ChevronRight size={20} />
-                </button>
-              </div>
+              <div className="w-11" aria-hidden="true" /> {/* balance spacer */}
 
               <div className="flex items-center gap-2 text-xs text-zinc-500 tabular-nums">
                 {(() => {
@@ -1030,19 +1087,13 @@ export default function LinguaEcho() {
                         Переименовать
                       </button>
                       <button
-                        onClick={() => {
-                          if (!confirm(`Удалить папку «${name}»?\nШаблоны будут перемещены в «Активные».`)) return
-                          deleteFolder(name, false)
-                        }}
+                        onClick={() => openDeleteFolder(name)}
                         className="rounded-lg border px-3 py-1 text-xs hover:bg-zinc-50"
                       >
                         Удалить (переместить)
                       </button>
                       <button
-                        onClick={() => {
-                          if (!confirm(`ВНИМАНИЕ!\nУдалить папку «${name}» и все ${count} шаблонов внутри?\nАудио будут удалены навсегда.`)) return
-                          deleteFolder(name, true)
-                        }}
+                        onClick={() => openDeleteFolder(name)}
                         className="rounded-lg border border-red-200 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
                       >
                         Удалить с шаблонами
@@ -1108,6 +1159,47 @@ export default function LinguaEcho() {
               >
                 Готово
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Folder delete choice modal (nice interface instead of native confirms) */}
+      {isFolderDeleteModalOpen && deleteFolderName && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsFolderDeleteModalOpen(false)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-lg font-semibold">Удалить папку «{deleteFolderName}»?</div>
+            <p className="mt-1 text-sm text-zinc-600">
+              В папке {deleteFolderTemplateCount} шаблон{deleteFolderTemplateCount === 1 ? '' : deleteFolderTemplateCount < 5 ? 'а' : 'ов'}.
+            </p>
+
+            <div className="mt-4 space-y-2">
+              <button
+                onClick={() => {
+                  deleteFolder(deleteFolderName, false)
+                  setIsFolderDeleteModalOpen(false)
+                  setDeleteFolderName('')
+                }}
+                className="w-full rounded-xl border px-4 py-3 text-left text-sm hover:bg-zinc-50 active:scale-[0.985]"
+              >
+                Удалить папку и переместить шаблоны в «Активные» (безопасно, шаблоны сохранятся)
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`ВНИМАНИЕ: удалить папку «${deleteFolderName}» и ВСЕ ${deleteFolderTemplateCount} шаблонов внутри? Аудио будут удалены навсегда.`)) {
+                    deleteFolder(deleteFolderName, true)
+                  }
+                  setIsFolderDeleteModalOpen(false)
+                  setDeleteFolderName('')
+                }}
+                className="w-full rounded-xl border border-red-200 px-4 py-3 text-left text-sm text-red-600 hover:bg-red-50 active:scale-[0.985]"
+              >
+                Удалить папку и ВСЕ шаблоны внутри (необратимо)
+              </button>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => { setIsFolderDeleteModalOpen(false); setDeleteFolderName('') }} className="rounded-2xl px-5 py-2 text-sm">Отмена</button>
             </div>
           </div>
         </div>
