@@ -138,6 +138,34 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     // For fallback we apply on next speak
   }
 
+  // NEW: discrete skip controls requested by user (waveform clicks alone felt insufficient for control)
+  const skip = (seconds: number) => {
+    if (usingFallback) {
+      // SpeechSynthesis is one-shot; we can't easily seek mid-utterance.
+      // Restarting would lose context for the child, so we simply do nothing or could re-speak from start.
+      // For now, keep silent (buttons will only be useful with real audioUrl).
+      return
+    }
+    const ws = wsRef.current
+    if (!ws || !duration) return
+    const newTime = Math.max(0, Math.min(duration, currentTime + seconds))
+    ws.seekTo(newTime / duration)
+  }
+
+  const goToStart = () => {
+    if (usingFallback) {
+      stopFallback()
+      return
+    }
+    const ws = wsRef.current
+    if (ws) {
+      ws.pause()
+      ws.seekTo(0)
+      setCurrentTime(0)
+      setIsPlaying(false)
+    }
+  }
+
   const playRegion = () => {
     const regions = regionsRef.current
     if (regions) {
@@ -224,6 +252,27 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
           </div>
         </div>
 
+        {/* NEW skip controls: user requested because clicking the waveform alone didn't provide reliable control */}
+        <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-1 text-xs">
+          <button
+            onClick={goToStart}
+            className="rounded px-2 py-1 hover:bg-zinc-100 active:bg-zinc-200"
+            title="В самое начало"
+          >
+            |&lt;&lt;
+          </button>
+          {[-1, -3, -5].map((d) => (
+            <button
+              key={d}
+              onClick={() => skip(d)}
+              className="rounded px-2 py-1 hover:bg-zinc-100 active:bg-zinc-200"
+              title={`Назад на ${Math.abs(d)} секунд`}
+            >
+              -{Math.abs(d)}s
+            </button>
+          ))}
+        </div>
+
         {/* Speed controls - very useful for language learning */}
         <div className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-white p-1 text-sm">
           {[0.6, 0.75, 1, 1.25, 1.4].map((r) => (
@@ -287,8 +336,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
       <p className="mt-1 text-[11px] text-zinc-500">
         {usingFallback
-          ? 'Нажмите плей — используем системный голос браузера. Добавьте ключ xAI для естественной живой речи.'
-          : 'Перетаскивайте по волне, чтобы выделить часть фразы. Идеально для отработки отдельных кусочков.'}
+          ? 'Демо-озвучка браузером. Добавьте ключ ElevenLabs для естественной речи (и Gemini — для генерации шаблонов).'
+          : 'Перетаскивайте по волне или используйте кнопки -1s/-3s/-5s / |<< для точного контроля. Выделяйте регионы для зацикливания.'}
       </p>
     </div>
   )

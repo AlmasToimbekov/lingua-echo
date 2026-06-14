@@ -12,17 +12,26 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* Force light theme for consistent friendly appearance (avoids "black" backgrounds user disliked).
+   High contrast by default. */
+html {
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: #f8fafc; /* soft off-white instead of pure or dark */
+  color: #0f172a; /* dark slate for excellent contrast */
   font-family: var(--font-geist-sans);
+}
+
+/* Secondary / help text — much higher contrast than zinc-500 on white */
+.text-secondary {
+  color: #334155; /* slate-700 */
+}
+
+/* Modal backdrops — softer than pure black */
+.modal-backdrop {
+  background-color: rgba(15, 23, 42, 0.45); /* slate-900 with transparency */
 }
 
 .container-card {

@@ -6,16 +6,16 @@ import { toast } from 'sonner'
 import { Template } from '../lib/types'
 import { SEED_TEMPLATES } from '../lib/seed'
 import { loadTemplates, saveTemplates, revokeUnusedAudioUrls } from '../lib/storage'
-import { generateTemplates } from '../lib/xai'
-import { generateAudio, TTSProvider } from '../lib/tts'
+import { generateAudio } from '../lib/tts'
+import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
 import { RussianAudioButton } from '../components/RussianAudioButton'
 
 const SETTINGS_KEY = 'lingua-echo:settings'
 
 type Settings = {
-  xaiKey: string
-  ttsProvider: 'xai' | 'elevenlabs' | 'browser'
+  geminiKey: string   // required for AI template generation (Google Gemini free tier)
+  elevenKey: string   // primary for natural TTS voice
 }
 
 const TOPICS = [
@@ -37,7 +37,7 @@ const COMPLEXITIES = [
 export default function LinguaEcho() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [currentId, setCurrentId] = useState<string>('')
-  const [settings, setSettings] = useState<Settings>({ xaiKey: '', ttsProvider: 'xai' })
+  const [settings, setSettings] = useState<Settings>({ geminiKey: '', elevenKey: '' })
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isGenerateOpen, setIsGenerateOpen] = useState(false)
 
@@ -61,10 +61,16 @@ export default function LinguaEcho() {
       saveTemplates(seeded)
     }
 
-    // Load settings
+    // Load settings (support old shape for migration)
     try {
       const raw = localStorage.getItem(SETTINGS_KEY)
-      if (raw) setSettings(JSON.parse(raw))
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        setSettings({
+          geminiKey: parsed.geminiKey || parsed.xaiKey || '',
+          elevenKey: parsed.elevenKey || ''
+        })
+      }
     } catch {}
   }, [])
 
@@ -111,83 +117,64 @@ export default function LinguaEcho() {
     toast.success('Настройки сохранены (только в этом браузере)')
   }
 
-  // Real generation using user's xAI key (primary path per plan + review comment "a")
+  // Generation now requires Gemini key (user explicitly requested: "key should be pasted for this functionality to work").
+  // Uses real Google Gemini (not pre-populated values). TTS uses ElevenLabs if key present.
   const handleGenerate = async () => {
+    if (!settings.geminiKey) {
+      toast.error('Для генерации шаблонов с ИИ вставьте ключ Google Gemini в Настройках (бесплатный tier доступен).')
+      return
+    }
+
     setIsGenerating(true)
 
     const topic = genCustomTopic.trim() || genTopic
     const maxWords = COMPLEXITIES[genComplexity].maxWords
     const count = Math.min(Math.max(5, genCount), 20)
 
-    const provider: TTSProvider = settings.ttsProvider
-    const keyToUse = settings.xaiKey
-
     try {
-      let newOnes: Template[]
+      // 1. Gemini for the text templates (key required)
+      const generated = await (await import('../lib/gemini')).generateTemplates({
+        topic,
+        maxWords,
+        count,
+        apiKey: settings.geminiKey,
+      })
 
-      if (keyToUse && provider === 'xai') {
-        // 1. Ask Grok for the sentences
-        const generated = await generateTemplates({
-          topic,
-          maxWords,
-          count,
-          apiKey: keyToUse,
-        })
+      // 2. TTS audio (ElevenLabs if key, else browser fallback). Sequential.
+      const final: Template[] = []
+      for (let i = 0; i < generated.length; i++) {
+        const g = generated[i]
+        const id = 'gen-' + Date.now() + '-' + i
 
-        // 2. Generate audios (EN + RU) — sequential to be kind to limits
-        const final: Template[] = []
-        for (let i = 0; i < generated.length; i++) {
-          const g = generated[i]
-          const id = 'gen-' + Date.now() + '-' + i
+        toast.loading(`Генерируем аудио ${i + 1} из ${generated.length}...`, { id: 'gen-progress' })
 
-          // Show progress
-          toast.loading(`Генерируем аудио ${i + 1} из ${generated.length}...`, { id: 'gen-progress' })
+        let enBlob: Blob | null = null
+        let ruBlob: Blob | null = null
 
-          let enBlob: Blob | null = null
-          let ruBlob: Blob | null = null
-
+        if (settings.elevenKey) {
           try {
-            enBlob = await generateAudio(g.en, 'en', { provider, apiKey: keyToUse })
-          } catch (e) {
-            console.warn('EN TTS failed, will use fallback', e)
-          }
+            enBlob = await generateAudio(g.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
+          } catch (e) { console.warn('EN ElevenLabs failed', e) }
           try {
-            ruBlob = await generateAudio(g.ru, 'ru', { provider, apiKey: keyToUse })
-          } catch (e) {
-            console.warn('RU TTS failed, will use fallback', e)
-          }
-
-          const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
-          const ruAudioUrl = ruBlob ? URL.createObjectURL(ruBlob) : undefined
-
-          final.push({
-            id,
-            en: g.en,
-            ru: g.ru,
-            enAudioUrl,
-            ruAudioUrl,
-          })
+            ruBlob = await generateAudio(g.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
+          } catch (e) { console.warn('RU ElevenLabs failed', e) }
         }
-        toast.dismiss('gen-progress')
-        newOnes = final
-      } else {
-        // No key or not xAI → graceful demo (still useful)
-        await new Promise(r => setTimeout(r, 420))
-        newOnes = Array.from({ length: Math.min(4, count) }).map((_, i) => ({
-          id: 'demo-' + Date.now() + '-' + i,
-          en: `Can you tell me more about ${topic.toLowerCase()}?`,
-          ru: `Расскажи мне больше про ${topic.toLowerCase().replace('семья','семью')}.`,
-        }))
-      }
 
-      const updated = [...templates, ...newOnes]
+        const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
+        const ruAudioUrl = ruBlob ? URL.createObjectURL(ruBlob) : undefined
+
+        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl })
+      }
+      toast.dismiss('gen-progress')
+
+      const updated = [...templates, ...final]
       setTemplates(updated)
-      setCurrentId(newOnes[0].id)
+      setCurrentId(final[0].id)
 
       setIsGenerateOpen(false)
-      toast.success(`${newOnes.length} новых шаблонов добавлено.`)
+      toast.success(`${final.length} новых шаблонов добавлено с помощью Gemini + ElevenLabs.`)
     } catch (err: any) {
-      toast.error(err?.message || 'Ошибка генерации. Проверьте ключ xAI в Настройках.')
+      toast.error(err?.message || 'Ошибка генерации. Проверьте ключи Gemini и/или ElevenLabs.')
     } finally {
       setIsGenerating(false)
       toast.dismiss('gen-progress')
@@ -196,19 +183,18 @@ export default function LinguaEcho() {
 
   const handleRegenerateAudio = async (id: string) => {
     const tpl = templates.find(t => t.id === id)
-    if (!tpl || !settings.xaiKey) {
-      toast('Для перегенерации нужен ключ xAI в Настройках')
+    if (!tpl || !settings.elevenKey) {
+      toast('Для перегенерации озвучки нужен ключ ElevenLabs в Настройках')
       return
     }
     try {
       toast.loading('Перегенерируем аудио...', { id: 'regen' })
-      const enBlob = await generateAudio(tpl.en, 'en', { provider: settings.ttsProvider, apiKey: settings.xaiKey })
-      const ruBlob = await generateAudio(tpl.ru, 'ru', { provider: settings.ttsProvider, apiKey: settings.xaiKey })
+      const enBlob = await generateAudio(tpl.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
+      const ruBlob = await generateAudio(tpl.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
 
       const newEnUrl = enBlob ? URL.createObjectURL(enBlob) : tpl.enAudioUrl
       const newRuUrl = ruBlob ? URL.createObjectURL(ruBlob) : tpl.ruAudioUrl
 
-      // Revoke old if they were blobs
       if (tpl.enAudioUrl && tpl.enAudioUrl !== newEnUrl) { try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {} }
       if (tpl.ruAudioUrl && tpl.ruAudioUrl !== newRuUrl) { try { URL.revokeObjectURL(tpl.ruAudioUrl) } catch {} }
 
@@ -242,7 +228,7 @@ export default function LinguaEcho() {
               onClick={() => setIsGenerateOpen(true)}
               className="flex items-center gap-2 rounded-full bg-indigo-600 px-5 py-2 font-medium text-white shadow hover:bg-indigo-700 active:bg-indigo-800"
             >
-              <Plus size={16} /> Сгенерировать с Grok
+              <Plus size={16} /> Сгенерировать шаблоны
             </button>
 
             <button
@@ -264,42 +250,50 @@ export default function LinguaEcho() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 pt-8">
-        {/* Deck strip — templates available on open */}
-        <div className="mb-4 flex items-center justify-between">
-          <div className="text-sm font-medium text-zinc-600">Мои шаблоны</div>
-          <button onClick={resetToSeeds} className="text-xs text-zinc-500 hover:text-zinc-700">Восстановить исходные 10</button>
-        </div>
+      <main className="mx-auto max-w-6xl px-6 pt-8">
+        <div className="flex gap-6">
+          {/* Vertical left sidebar for templates (easier to scroll down than horizontal list).
+              Selected is strongly highlighted. */}
+          <div className="w-72 flex-shrink-0">
+            <div className="mb-2 flex items-center justify-between text-sm font-medium text-zinc-600">
+              <span>Мои шаблоны ({templates.length})</span>
+              <button onClick={resetToSeeds} className="text-xs text-zinc-500 hover:text-zinc-700">Сбросить</button>
+            </div>
 
-        <div className="mb-8 flex gap-2 overflow-x-auto pb-3 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {templates.map((t, idx) => {
-            const isActive = t.id === currentId
-            return (
-              <div
-                key={t.id}
-                onClick={() => switchTo(t.id)}
-                className={`group relative flex min-w-[168px] cursor-pointer flex-col rounded-2xl border px-4 py-3 text-left transition active:scale-[0.985] ${
-                  isActive ? 'border-indigo-400 bg-white shadow' : 'border-zinc-200 bg-white hover:border-zinc-300'
-                }`}
-              >
-                <div className="line-clamp-2 text-[13px] font-medium leading-tight text-zinc-800">
-                  {t.en}
-                </div>
-                <div className="mt-1 line-clamp-1 text-[11px] text-zinc-500">{t.ru}</div>
+            <div className="max-h-[68vh] overflow-y-auto pr-1 space-y-1.5 border-r border-zinc-200">
+              {templates.map((t) => {
+                const isActive = t.id === currentId
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => switchTo(t.id)}
+                    className={`group relative flex cursor-pointer flex-col rounded-xl border px-3 py-2.5 text-left transition active:scale-[0.985] ${
+                      isActive
+                        ? 'border-indigo-500 bg-indigo-50 shadow-sm font-medium'
+                        : 'border-zinc-200 bg-white hover:border-zinc-300'
+                    }`}
+                  >
+                    <div className={`line-clamp-2 text-[13px] leading-tight ${isActive ? 'text-indigo-900' : 'text-zinc-800'}`}>
+                      {t.en}
+                    </div>
+                    <div className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">{t.ru}</div>
 
-                <button
-                  onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id) }}
-                  className="absolute right-1.5 top-1.5 hidden rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-500 group-hover:block"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )
-          })}
-        </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id) }}
+                      className="absolute right-1 top-1 hidden rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-500 group-hover:block"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
 
-        {/* THE MAIN CONTAINER — exactly as requested */}
-        <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
+          {/* Main viewer area (the container) */}
+          <div className="flex-1 min-w-0">
+            {/* THE MAIN CONTAINER — bilingual + dual audio as requested */}
+            <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
           {/* English text — prominent, large, readable for children */}
           <div className="mb-1 text-[11px] font-medium uppercase tracking-[1.5px] text-indigo-600">АНГЛИЙСКИЙ</div>
           <div className="text-balance text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950">
@@ -362,14 +356,12 @@ export default function LinguaEcho() {
               Полезно для ребёнка: можно выделить часть фразы и зациклить на медленной скорости
             </div>
           </div>
-        </div>
-
-        <div className="mt-6 text-center text-xs text-zinc-500">
-          Добавьте ключ xAI в Настройках, чтобы генерировать 15–20 естественных шаблонов с живой озвучкой американского английского.
-        </div>
+        </div> {/* end of main container card */}
+          </div> {/* end of viewer flex-1 */}
+        </div> {/* end of sidebar + viewer flex */}
       </main>
 
-      {/* Settings Dialog (addressing review note: xAI as primary "a") */}
+      {/* Settings Dialog — Gemini (gen) + ElevenLabs (voice). Keys required for their features. High contrast. */}
       {isSettingsOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsSettingsOpen(false)}>
           <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
@@ -378,49 +370,65 @@ export default function LinguaEcho() {
               <button onClick={() => setIsSettingsOpen(false)}><X /></button>
             </div>
 
-            <div className="mt-6 space-y-5">
+            <div className="mt-6 space-y-6 text-sm">
+              {/* Gemini for template generation (key required) */}
               <div>
-                <label className="block text-sm font-medium">Ключ xAI (Grok API)</label>
+                <label className="block font-medium text-slate-800">Ключ Google Gemini (для генерации шаблонов)</label>
                 <input
                   type="password"
-                  value={settings.xaiKey}
-                  onChange={e => setSettings(s => ({ ...s, xaiKey: e.target.value }))}
-                  placeholder="xai-..."
-                  className="mt-1 w-full rounded-xl border px-4 py-3 font-mono text-sm"
+                  value={settings.geminiKey}
+                  onChange={e => setSettings(s => ({ ...s, geminiKey: e.target.value }))}
+                  placeholder="AIza..."
+                  className="mt-1 w-full rounded-xl border px-4 py-2.5 font-mono text-sm"
                 />
-                <a href="https://console.x.ai/" target="_blank" className="text-xs text-indigo-600 underline">Получить ключ на console.x.ai</a>
-                <p className="mt-1 text-[11px] text-zinc-500">Используется и для генерации шаблонов, и для озвучки (TTS).</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1.5">Провайдер озвучки (TTS)</label>
-                <div className="flex flex-col gap-2 text-sm">
-                  <label className="flex items-center gap-2">
-                    <input type="radio" name="tts" checked={settings.ttsProvider === 'xai'} onChange={() => setSettings(s => ({...s, ttsProvider: 'xai'}))} />
-                    a) xAI (рекомендуется — один ключ, естественная речь + теги)
-                  </label>
-                  <label className="flex items-center gap-2 opacity-70">
-                    <input type="radio" name="tts" checked={settings.ttsProvider === 'elevenlabs'} onChange={() => setSettings(s => ({...s, ttsProvider: 'elevenlabs'}))} />
-                    b) ElevenLabs (отдельный ключ)
-                  </label>
-                  <label className="flex items-center gap-2">
-                    <input type="radio" name="tts" checked={settings.ttsProvider === 'browser'} onChange={() => setSettings(s => ({...s, ttsProvider: 'browser'}))} />
-                    c) Браузер (без ключа, для демо)
-                  </label>
+                <div className="mt-1 flex items-center gap-2">
+                  <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-xs text-indigo-600 underline">Получить ключ (бесплатный tier)</a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!settings.geminiKey) {
+                        toast.error('Сначала вставьте ключ');
+                        return;
+                      }
+                      try {
+                        const res = await listAvailableModels(settings.geminiKey);
+                        console.log('Available Gemini models for your key:', res);
+                        toast.success('Список моделей выведен в консоль браузера (F12 → Console). Ищите модели с supportedGenerationMethods включающим "generateContent".');
+                      } catch (e: any) {
+                        toast.error(e.message || 'Не удалось получить список моделей');
+                      }
+                    }}
+                    className="text-[10px] rounded-md border border-slate-300 px-2 py-0.5 hover:bg-slate-50 active:bg-slate-100"
+                  >
+                    Показать доступные модели
+                  </button>
                 </div>
+                <p className="mt-1 text-[11px] text-slate-600">Нужен для кнопки «Сгенерировать шаблоны». Без ключа генерация ИИ не работает.</p>
               </div>
 
-              {settings.ttsProvider === 'elevenlabs' && (
-                <div className="text-xs text-amber-600">Для ElevenLabs позже добавим отдельное поле ключа.</div>
-              )}
+              {/* ElevenLabs for voice (primary) */}
+              <div>
+                <label className="block font-medium text-slate-800">Ключ ElevenLabs (для естественной озвучки)</label>
+                <input
+                  type="password"
+                  value={settings.elevenKey}
+                  onChange={e => setSettings(s => ({ ...s, elevenKey: e.target.value }))}
+                  placeholder="sk_..."
+                  className="mt-1 w-full rounded-xl border px-4 py-2.5 font-mono text-sm"
+                />
+                <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" className="text-xs text-indigo-600 underline">Получить ключ ElevenLabs</a>
+                <p className="mt-1 text-[11px] text-slate-600">Используется для высококачественной озвучки английского и русского (рекомендуется).</p>
+              </div>
+
+              <div className="text-[10px] text-slate-500 border-t pt-3">
+                Ключи хранятся только в вашем браузере. Для семьи и личного использования.
+              </div>
             </div>
 
             <div className="mt-8 flex justify-end gap-3">
               <button onClick={() => setIsSettingsOpen(false)} className="rounded-2xl px-5 py-2.5 text-sm">Отмена</button>
               <button onClick={() => saveSettings(settings)} className="rounded-2xl bg-zinc-900 px-6 py-2.5 text-sm font-medium text-white">Сохранить</button>
             </div>
-
-            <div className="mt-4 text-[10px] text-zinc-400">Ключи хранятся только в браузере. Для семьи и личного использования.</div>
           </div>
         </div>
       )}
@@ -429,8 +437,8 @@ export default function LinguaEcho() {
       {isGenerateOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsGenerateOpen(false)}>
           <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-xl" onClick={e => e.stopPropagation()}>
-            <div className="text-xl font-semibold tracking-tight">Сгенерировать новые шаблоны с Grok</div>
-            <p className="mt-1 text-sm text-zinc-600">15–20 естественных фраз. Высокая частотность, американский английский.</p>
+            <div className="text-xl font-semibold tracking-tight">Сгенерировать шаблоны с ИИ</div>
+            <p className="mt-1 text-sm text-zinc-600">15–20 естественных фраз. Высокая частотность, американский английский. Требуется ключ Google Gemini.</p>
 
             <div className="mt-6 space-y-6">
               {/* Topic */}
