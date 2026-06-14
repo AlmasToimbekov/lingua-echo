@@ -59,19 +59,38 @@ export async function generateTemplates(params: {
   maxWords: number
   count: number
   apiKey: string
+  isAdult?: boolean
 }): Promise<GeneratedTemplate[]> {
-  const { topic, maxWords, count, apiKey } = params
+  const { topic, maxWords, count, apiKey, isAdult = false } = params
   if (!apiKey) throw new Error('Нужен ключ Google Gemini для генерации шаблонов')
 
-  const system = `You are an expert designer of spoken American English learning materials for Russian-speaking children and families.
+  const system = isAdult
+    ? `You are an expert designer of spoken American English learning materials for Russian-speaking adults.
 
 Your ONLY job is to output a valid JSON array. Think as little as possible.
 
-Generate ONLY natural, high-frequency, idiomatic English sentences that real native speakers (kids + parents) actually use in everyday life.
+Generate ONLY natural, high-frequency, idiomatic English sentences that real native speakers actually use in everyday adult life (social interactions, work, travel, relationships, daily routines, requests, small talk, etc.).
+
+Rules:
+- Use contractions, natural rhythm, common collocations and adult vocabulary where appropriate.
+- Keep sentences max ${maxWords} words each.
+- Natural, conversational but slightly more sophisticated tone suitable for adults.
+- For each, provide a natural, accurate Russian translation an adult understands.
+- Output EXACTLY ${count} items.
+
+Output format — NOTHING ELSE:
+[{"en":"...","ru":"..."}, ...]
+
+Return a complete, valid JSON array and stop. Do not add commentary, markdown, or trailing text.`
+    : `You are an expert designer of spoken American English learning materials for Russian-speaking children and families.
+
+Your ONLY job is to output a valid JSON array. Think as little as possible.
+
+Generate ONLY natural, high-frequency, idiomatic English sentences that real native speakers actually use in everyday life.
 
 Rules:
 - Use contractions, natural rhythm, common collocations.
-- Keep sentences short-to-medium (max ${maxWords} words each).
+- Keep sentences max ${maxWords} words each.
 - Warm, friendly tone for children.
 - For each, provide a natural, accurate Russian translation a child understands.
 - Output EXACTLY ${count} items.
@@ -81,7 +100,12 @@ Output format — NOTHING ELSE:
 
 Return a complete, valid JSON array and stop. Do not add commentary, markdown, or trailing text.`
 
-  const user = `Topic / situation: ${topic}
+  const user = isAdult
+    ? `Topic / situation: ${topic}
+Maximum words per English sentence: ${maxWords}
+Number of templates: ${count}
+Focus on frequent spoken patterns for daily adult life in American English.`
+    : `Topic / situation: ${topic}
 Maximum words per English sentence: ${maxWords}
 Number of templates: ${count}
 Focus on frequent spoken patterns for daily family and child life in American English.`

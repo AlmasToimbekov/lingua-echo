@@ -110,6 +110,13 @@ export default function LinguaEcho() {
     deleteFolder(name, deleteTemplates)
   }
 
+  const openFolderNameModal = (title: string, initialValue: string, onConfirm: (name: string) => void) => {
+    setFolderNameModalTitle(title)
+    setFolderNameModalValue(initialValue)
+    setFolderNameModalOnConfirm(() => onConfirm)
+    setIsFolderNameModalOpen(true)
+  }
+
   // Pure helper so we can compute filtered in handlers before state commits
   const getFilteredFor = (folder: string, list: Template[] = templates) => {
     if (folder === 'learned') return list.filter(t => t.folder === 'learned')
@@ -122,7 +129,20 @@ export default function LinguaEcho() {
   const [genCustomTopic, setGenCustomTopic] = useState('')
   const [genComplexity, setGenComplexity] = useState(1)
   const [genCount, setGenCount] = useState(8)
+  const [genIsAdult, setGenIsAdult] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
+
+  // Nice modal for folder name input (replaces ugly native prompt for create/rename)
+  const [isFolderNameModalOpen, setIsFolderNameModalOpen] = useState(false)
+  const [folderNameModalTitle, setFolderNameModalTitle] = useState('')
+  const [folderNameModalValue, setFolderNameModalValue] = useState('')
+  const [folderNameModalOnConfirm, setFolderNameModalOnConfirm] = useState<((name: string) => void) | null>(null)
+
+  // Nice modal for editing template texts (replaces two native prompts)
+  const [isEditTemplateOpen, setIsEditTemplateOpen] = useState(false)
+  const [editTemplateId, setEditTemplateId] = useState('')
+  const [editEn, setEditEn] = useState('')
+  const [editRu, setEditRu] = useState('')
 
   // Hydrate a list of templates with fresh audio object URLs from IndexedDB (if we have stored buffers).
   // This is the key change that makes generated voices survive page refresh.
@@ -286,6 +306,7 @@ export default function LinguaEcho() {
         maxWords,
         count,
         apiKey: settings.geminiKey,
+        isAdult: genIsAdult,
       })
 
       // 2. TTS audio (ElevenLabs if key, else browser fallback). Sequential.
@@ -488,23 +509,25 @@ export default function LinguaEcho() {
               })}
               <button
                 onClick={() => {
-                  const name = prompt('Название новой папки?')?.trim()
-                  if (name) {
-                    addCustomFolder(name)
-                    setActiveFolder(name)
-                  }
+                  openFolderNameModal('Название новой папки', '', (name) => {
+                    if (name) {
+                      addCustomFolder(name)
+                      setActiveFolder(name)
+                    }
+                  })
                 }}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault()
                   const draggedId = e.dataTransfer.getData('text/template-id')
                   if (draggedId) {
-                    const name = prompt('Название новой папки?')?.trim()
-                    if (name) {
-                      addCustomFolder(name)
-                      setTemplateFolder(draggedId, name)
-                      setActiveFolder(name)
-                    }
+                    openFolderNameModal('Название новой папки', '', (name) => {
+                      if (name) {
+                        addCustomFolder(name)
+                        setTemplateFolder(draggedId, name)
+                        setActiveFolder(name)
+                      }
+                    })
                   }
                 }}
                 className="shrink-0 rounded-full border border-dashed border-zinc-300 px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-50 active:scale-95"
@@ -696,12 +719,10 @@ export default function LinguaEcho() {
 
                 <button
                   onClick={() => {
-                    const newEn = prompt('Новый английский текст:', current.en) || current.en
-                    const newRu = prompt('Новый русский текст:', current.ru) || current.ru
-                    if (newEn !== current.en || newRu !== current.ru) {
-                      setTemplates(ts => ts.map(t => t.id === current.id ? { ...t, en: newEn.trim(), ru: newRu.trim() } : t))
-                      toast('Текст обновлён')
-                    }
+                    setEditTemplateId(current.id)
+                    setEditEn(current.en)
+                    setEditRu(current.ru)
+                    setIsEditTemplateOpen(true)
                   }}
                   className="rounded-xl border border-zinc-200 px-4 py-2 hover:bg-zinc-50"
                 >
@@ -837,7 +858,7 @@ export default function LinguaEcho() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsGenerateOpen(false)}>
           <div className="w-full max-w-lg rounded-3xl bg-white p-7 shadow-xl" onClick={e => e.stopPropagation()}>
             <div className="text-xl font-semibold tracking-tight">Сгенерировать шаблоны с ИИ</div>
-            <p className="mt-1 text-sm text-zinc-600">От 1 до 20 естественных фраз. Высокая частотность, американский английский. Требуется ключ Google Gemini.</p>
+            <p className="mt-1 text-sm text-zinc-600">От 1 до 20 естественных фраз. Выберите стиль (дети по умолчанию) и опишите тему своими словами. Требуется ключ Google Gemini.</p>
 
             <div className="mt-6 space-y-6">
               {/* Topic */}
@@ -851,12 +872,23 @@ export default function LinguaEcho() {
                     </button>
                   ))}
                 </div>
-                <input
+                <textarea
                   value={genCustomTopic}
-                  onChange={e => setGenCustomTopic(e.target.value)}
-                  placeholder="Или введите свою тему..."
-                  className="mt-3 w-full rounded-2xl border px-4 py-2 text-sm"
+                  onChange={e => {
+                    const words = e.target.value.trim().split(/\s+/).filter(Boolean)
+                    if (words.length <= 50) {
+                      setGenCustomTopic(e.target.value)
+                    } else {
+                      setGenCustomTopic(words.slice(0, 50).join(' '))
+                    }
+                  }}
+                  placeholder="Если темы выше не подошли, здесь можно описать нужную ситуацию"
+                  rows={3}
+                  className="mt-3 w-full rounded-2xl border px-4 py-2 text-sm resize-y min-h-[70px]"
                 />
+                <div className="mt-1 text-[10px] text-zinc-400">
+                  {genCustomTopic.trim().split(/\s+/).filter(Boolean).length}/50 слов • Можно писать свободным языком
+                </div>
               </div>
 
               {/* Complexity */}
@@ -878,6 +910,21 @@ export default function LinguaEcho() {
                 </div>
                 <input type="range" min={1} max={20} step={1} value={genCount} onChange={e => setGenCount(parseInt(e.target.value))} className="w-full accent-indigo-600" />
               </div>
+
+              {/* Adult / child mode */}
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="genIsAdult"
+                  checked={genIsAdult}
+                  onChange={e => setGenIsAdult(e.target.checked)}
+                  className="h-4 w-4 accent-indigo-600"
+                />
+                <label htmlFor="genIsAdult" className="text-sm font-medium cursor-pointer">
+                  Для взрослых (более естественный взрослый язык и ситуации)
+                </label>
+              </div>
+              <p className="text-[10px] text-zinc-400 -mt-1">По умолчанию — дружелюбный стиль для детей и семей.</p>
             </div>
 
             <div className="mt-8 flex gap-3">
@@ -929,14 +976,15 @@ export default function LinguaEcho() {
 
               <button
                 onClick={() => {
-                  const name = prompt('Название новой папки?')?.trim()
-                  if (name) {
-                    addCustomFolder(name)
-                    setTemplateFolder(current.id, name)
-                    setIsMoveOpen(false)
-                    setActiveFolder(name)
-                    toast.success(`Создана папка «${name}» и шаблон перемещён`, { position: 'bottom-center' })
-                  }
+                  openFolderNameModal('Название новой папки', '', (name) => {
+                    if (name) {
+                      addCustomFolder(name)
+                      setTemplateFolder(current.id, name)
+                      setIsMoveOpen(false)
+                      setActiveFolder(name)
+                      toast.success(`Создана папка «${name}» и шаблон перемещён`, { position: 'bottom-center' })
+                    }
+                  })
                 }}
                 className="w-full rounded-xl border border-dashed border-zinc-300 px-4 py-3 text-left text-sm text-zinc-600 hover:bg-zinc-50 active:scale-[0.985]"
               >
@@ -973,8 +1021,9 @@ export default function LinguaEcho() {
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
-                          const nn = prompt('Новое название папки', name)?.trim()
-                          if (nn) renameFolder(name, nn)
+                          openFolderNameModal('Новое название папки', name, (nn) => {
+                            if (nn) renameFolder(name, nn)
+                          })
                         }}
                         className="rounded-lg border px-3 py-1 text-xs hover:bg-zinc-50"
                       >
@@ -1008,6 +1057,111 @@ export default function LinguaEcho() {
               <button onClick={() => setIsFoldersManageOpen(false)} className="rounded-2xl px-5 py-2 text-sm">Закрыть</button>
             </div>
             <p className="mt-3 text-[10px] text-zinc-400">Удаление папки не затрагивает «Активные» и «Изученные».</p>
+          </div>
+        </div>
+      )}
+
+      {/* Folder name input modal (nice replacement for native prompt) */}
+      {isFolderNameModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsFolderNameModalOpen(false)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-lg font-semibold">{folderNameModalTitle}</div>
+            <input
+              type="text"
+              value={folderNameModalValue}
+              onChange={e => setFolderNameModalValue(e.target.value)}
+              placeholder="Название папки"
+              className="mt-3 w-full rounded-2xl border px-4 py-2 text-sm"
+              maxLength={40}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && folderNameModalValue.trim() && folderNameModalOnConfirm) {
+                  folderNameModalOnConfirm(folderNameModalValue.trim())
+                  setIsFolderNameModalOpen(false)
+                  setFolderNameModalValue('')
+                  setFolderNameModalOnConfirm(null)
+                }
+              }}
+            />
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setIsFolderNameModalOpen(false)
+                  setFolderNameModalValue('')
+                  setFolderNameModalOnConfirm(null)
+                }}
+                className="rounded-2xl px-5 py-2 text-sm"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => {
+                  const name = folderNameModalValue.trim()
+                  if (name && folderNameModalOnConfirm) {
+                    folderNameModalOnConfirm(name)
+                  }
+                  setIsFolderNameModalOpen(false)
+                  setFolderNameModalValue('')
+                  setFolderNameModalOnConfirm(null)
+                }}
+                disabled={!folderNameModalValue.trim()}
+                className="rounded-2xl bg-indigo-600 px-5 py-2 text-sm text-white disabled:opacity-40"
+              >
+                Готово
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit template texts modal (nice replacement for native prompts) */}
+      {isEditTemplateOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsEditTemplateOpen(false)}>
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-lg font-semibold">Редактировать шаблон</div>
+
+            <div className="mt-4 space-y-4">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-widest text-indigo-600 mb-1">АНГЛИЙСКИЙ</div>
+                <textarea
+                  value={editEn}
+                  onChange={e => setEditEn(e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-2 text-sm min-h-[80px] resize-y"
+                />
+              </div>
+              <div>
+                <div className="text-xs font-medium uppercase tracking-widest text-sky-600 mb-1">РУССКИЙ ПЕРЕВОД</div>
+                <textarea
+                  value={editRu}
+                  onChange={e => setEditRu(e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-2 text-sm min-h-[80px] resize-y"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setIsEditTemplateOpen(false)}
+                className="rounded-2xl px-5 py-2 text-sm"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => {
+                  if (editTemplateId) {
+                    const newEn = editEn.trim()
+                    const newRu = editRu.trim()
+                    setTemplates(ts => ts.map(t =>
+                      t.id === editTemplateId ? { ...t, en: newEn, ru: newRu } : t
+                    ))
+                    toast('Текст обновлён')
+                  }
+                  setIsEditTemplateOpen(false)
+                }}
+                className="rounded-2xl bg-indigo-600 px-5 py-2 text-sm text-white"
+              >
+                Сохранить
+              </button>
+            </div>
           </div>
         </div>
       )}
