@@ -643,11 +643,11 @@ export default function LinguaEcho() {
           {/* Main viewer area (the container) */}
           {/* On mobile: exclusive with list — when showList=true we hide the detail so only left panel is visible */}
           <div className={`flex-1 min-w-0 relative ${showList ? 'hidden lg:block' : 'block'}`}>
-            {/* Persistent side navigation buttons (easy thumb reach in center) */}
+            {/* Persistent side navigation buttons, fixed to viewport so they stay vertically centered as you scroll up/down */}
             <button
               onClick={goPrev}
               disabled={filteredTemplates.findIndex(t => t.id === currentId) <= 0}
-              className="absolute left-1 top-1/2 -translate-y-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
+              className="fixed left-2 lg:left-[calc(18rem+0.5rem)] top-1/2 -translate-y-1/2 z-50 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
               aria-label="Предыдущий шаблон"
             >
               <ChevronLeft size={32} className="lg:size-[24px]" />
@@ -655,7 +655,7 @@ export default function LinguaEcho() {
             <button
               onClick={goNext}
               disabled={filteredTemplates.findIndex(t => t.id === currentId) >= filteredTemplates.length - 1}
-              className="absolute right-1 top-1/2 -translate-y-1/2 z-30 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
+              className="fixed right-2 top-1/2 -translate-y-1/2 z-50 flex h-16 w-16 items-center justify-center rounded-full bg-white/95 border border-zinc-300 text-zinc-600 shadow-lg hover:bg-white active:scale-95 disabled:opacity-20 disabled:pointer-events-none lg:h-14 lg:w-14"
               aria-label="Следующий шаблон"
             >
               <ChevronRight size={32} className="lg:size-[24px]" />
