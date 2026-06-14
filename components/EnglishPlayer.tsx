@@ -313,13 +313,13 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
           ))}
         </div>
 
-        {/* Speed controls - enlarged for children (bigger tap targets) */}
-        <div className="flex items-center gap-2 rounded-xl border border-indigo-200 bg-white p-1.5 text-sm">
+        {/* Speed controls - enlarged for children (bigger tap targets). Tighter on mobile to avoid overflow. */}
+        <div className="flex items-center gap-1 rounded-xl border border-indigo-200 bg-white p-1 text-xs sm:gap-2 sm:p-1.5 sm:text-sm">
           {[0.6, 0.75, 1, 1.25, 1.4].map((r) => (
             <button
               key={r}
               onClick={() => changeRate(r)}
-              className={`rounded-lg px-3 py-1.5 min-w-[48px] transition active:scale-95 ${playbackRate === r ? 'bg-indigo-600 text-white shadow' : 'hover:bg-indigo-100'}`}
+              className={`rounded-lg px-2 py-1 min-w-[38px] transition active:scale-95 sm:px-3 sm:py-1.5 sm:min-w-[48px] ${playbackRate === r ? 'bg-indigo-600 text-white shadow' : 'hover:bg-indigo-100'}`}
             >
               {r}×
             </button>

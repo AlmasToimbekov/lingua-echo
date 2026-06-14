@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
-import { Settings, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { Settings, Plus, RotateCcw, Trash2, X, ChevronLeft, ChevronRight, CheckCircle, Folder, Menu, MoreHorizontal } from 'lucide-react'
 import { toast } from 'sonner'
 import { Template } from '../lib/types'
 import { SEED_TEMPLATES } from '../lib/seed'
@@ -48,6 +48,65 @@ export default function LinguaEcho() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isGenerateOpen, setIsGenerateOpen] = useState(false)
 
+  // Folders + mobile list visibility (new for responsive + organization)
+  const [showList, setShowList] = useState(true)
+  const [activeFolder, setActiveFolder] = useState<string>('') // '' = Активные (non-learned), 'learned', or custom folder name
+  const [isMoveOpen, setIsMoveOpen] = useState(false)
+  const [customFolders, setCustomFolders] = useState<string[]>([])
+  const [isFoldersManageOpen, setIsFoldersManageOpen] = useState(false)
+
+  const FOLDERS_KEY = 'lingua-echo:folders'
+
+  const saveCustomFolders = (list: string[]) => {
+    setCustomFolders(list)
+    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify(list)) } catch {}
+  }
+
+  const addCustomFolder = (name: string) => {
+    const trimmed = name.trim()
+    if (!trimmed || customFolders.includes(trimmed)) return
+    saveCustomFolders([...customFolders, trimmed])
+  }
+
+  const renameFolder = (oldName: string, newName: string) => {
+    const trimmed = newName.trim()
+    if (!trimmed || oldName === trimmed || customFolders.includes(trimmed)) return
+    setTemplates(ts => ts.map(t => t.folder === oldName ? { ...t, folder: trimmed } : t))
+    const newList = customFolders.map(f => f === oldName ? trimmed : f)
+    saveCustomFolders(newList)
+    if (activeFolder === oldName) setActiveFolder(trimmed)
+    toast.success(`Папка переименована в «${trimmed}»`)
+  }
+
+  const deleteFolder = (name: string, deleteContents = false) => {
+    const affected = templates.filter(t => t.folder === name)
+    if (deleteContents) {
+      // destructive: remove templates + audio
+      affected.forEach(tpl => {
+        deleteAudioForTemplate(tpl.id).catch(() => {})
+      })
+      revokeUnusedAudioUrls(affected, templates.filter(t => t.folder !== name))
+      const remaining = templates.filter(t => t.folder !== name)
+      setTemplates(remaining)
+      if (currentId && affected.some(a => a.id === currentId)) {
+        setCurrentId(remaining[0]?.id || '')
+      }
+    } else {
+      // safe: move to active
+      setTemplates(ts => ts.map(t => t.folder === name ? { ...t, folder: '' } : t))
+    }
+    saveCustomFolders(customFolders.filter(f => f !== name))
+    if (activeFolder === name) setActiveFolder('')
+    toast(`Папка «${name}» удалена${deleteContents ? ' (вместе с шаблонами)' : ', шаблоны перемещены в Активные'}`)
+  }
+
+  // Pure helper so we can compute filtered in handlers before state commits
+  const getFilteredFor = (folder: string, list: Template[] = templates) => {
+    if (folder === 'learned') return list.filter(t => t.folder === 'learned')
+    if (folder === 'active' || folder === '') return list.filter(t => !t.folder || t.folder === '')
+    return list.filter(t => t.folder === folder)
+  }
+
   // Generate form state
   const [genTopic, setGenTopic] = useState('Семья')
   const [genCustomTopic, setGenCustomTopic] = useState('')
@@ -78,16 +137,18 @@ export default function LinguaEcho() {
   useEffect(() => {
     ;(async () => {
       const saved = loadTemplates()
+      // Normalize folder for old data (backward compat) + ensure new shape
+      const withFolder = saved.map((t) => ({ ...t, folder: t.folder || '' }))
       let initial: Template[]
 
-      if (saved.length > 0) {
+      if (withFolder.length > 0) {
         // Restore texts from localStorage, then hydrate audio from IndexedDB
-        initial = await hydrateTemplates(saved)
+        initial = await hydrateTemplates(withFolder)
         setTemplates(initial)
         setCurrentId(initial[0]?.id ?? '')
       } else {
         // По умолчанию показываем только 2 шаблона (пользователь попросил не перегружать 10-ю)
-        const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t }))
+        const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
         // Seeds have no audio yet
         setTemplates(seeded)
         setCurrentId(seeded[0].id)
@@ -105,6 +166,15 @@ export default function LinguaEcho() {
           })
         }
       } catch {}
+
+      // Load explicit custom folders (for + Папка, rename, delete, empty folders)
+      try {
+        const rawF = localStorage.getItem(FOLDERS_KEY)
+        if (rawF) {
+          const parsed = JSON.parse(rawF)
+          if (Array.isArray(parsed)) setCustomFolders(parsed)
+        }
+      } catch {}
     })()
   }, [])
 
@@ -115,9 +185,49 @@ export default function LinguaEcho() {
     }
   }, [templates])
 
+  // On first client mount, collapse list by default on narrow screens (iPhone portrait etc.)
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+      setShowList(false)
+    }
+  }, [])
+
+  // Sync custom folders with any folders found on templates (for legacy data)
+  useEffect(() => {
+    const fromTemplates = templates
+      .map((t) => t.folder)
+      .filter((f): f is string => !!f && f !== 'learned' && f !== '')
+    const merged = Array.from(new Set([...customFolders, ...fromTemplates]))
+    if (merged.length !== customFolders.length) {
+      saveCustomFolders(merged)
+    }
+  }, [templates])
+
   const current = templates.find(t => t.id === currentId) || templates[0]
 
   const switchTo = (id: string) => setCurrentId(id)
+
+  // Folders derived from explicit custom list (for empty folders support)
+  const availableFolders = useMemo(() => {
+    return ['active', 'learned', ...customFolders] as const
+  }, [customFolders])
+
+  const filteredTemplates = useMemo(() => getFilteredFor(activeFolder), [activeFolder, templates])
+
+  // Prev/next and counter now scoped to the current folder's list (as requested)
+  const goPrev = () => {
+    const idx = filteredTemplates.findIndex(t => t.id === currentId)
+    if (idx > 0) setCurrentId(filteredTemplates[idx - 1].id)
+  }
+  const goNext = () => {
+    const idx = filteredTemplates.findIndex(t => t.id === currentId)
+    if (idx >= 0 && idx < filteredTemplates.length - 1) setCurrentId(filteredTemplates[idx + 1].id)
+  }
+
+  // Unified folder setter (used by mark, move, dnd)
+  const setTemplateFolder = (id: string, folder: string) => {
+    setTemplates(ts => ts.map(t => t.id === id ? { ...t, folder } : t))
+  }
 
   const deleteTemplate = (id: string) => {
     const toDelete = templates.find(t => t.id === id)
@@ -143,7 +253,7 @@ export default function LinguaEcho() {
     Promise.all(templates.map(t => deleteAudioForTemplate(t.id))).catch(() => {})
 
     // По умолчанию возвращаем только 2 (как просил пользователь)
-    const seeded = SEED_TEMPLATES.slice(0, 2).map(t => ({ ...t }))
+    const seeded = SEED_TEMPLATES.slice(0, 2).map(t => ({ ...t, folder: '' }))
     setTemplates(seeded)
     setCurrentId(seeded[0].id)
     saveTemplates(seeded)
@@ -214,7 +324,9 @@ export default function LinguaEcho() {
           await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
         }
 
-        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl })
+        // Inherit current custom/active folder for new items (unless viewing learned)
+        const newItemFolder = (activeFolder && activeFolder !== 'learned') ? activeFolder : ''
+        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl, folder: newItemFolder })
       }
       toast.dismiss('gen-progress')
 
@@ -276,7 +388,7 @@ export default function LinguaEcho() {
         <div className="flex gap-3">
           <button
             onClick={() => {
-              const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t }))
+              const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
               setTemplates(seeded)
               setCurrentId(seeded[0].id)
               saveTemplates(seeded)
@@ -300,38 +412,40 @@ export default function LinguaEcho() {
     <div className="min-h-screen pb-12">
       {/* Header */}
       <header className="border-b bg-white/80 backdrop-blur sticky top-0 z-40">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="text-2xl font-semibold tracking-tighter text-indigo-700">LinguaEcho</div>
-            <div className="rounded-full bg-indigo-100 px-3 py-0.5 text-xs font-medium text-indigo-700">для семьи и детей</div>
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <div className="text-xl font-semibold tracking-tighter text-indigo-700 sm:text-2xl">LinguaEcho</div>
+            <div className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-medium text-indigo-700 sm:px-3 sm:py-0.5 sm:text-xs">для семьи и детей</div>
           </div>
 
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2 text-xs sm:gap-3 sm:text-sm">
             <div className="text-zinc-500">
               Шаблонов: <span className="font-medium text-zinc-700">{templates.length}</span>
             </div>
 
             <button
               onClick={() => setIsGenerateOpen(true)}
-              className="flex items-center gap-2 rounded-full bg-indigo-600 px-5 py-2 font-medium text-white shadow hover:bg-indigo-700 active:bg-indigo-800"
+              className="flex items-center gap-1.5 rounded-full bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow hover:bg-indigo-700 active:bg-indigo-800 sm:gap-2 sm:px-5 sm:py-2"
             >
-              <Plus size={16} /> Сгенерировать шаблоны
+              <Plus size={14} className="sm:size-[16px]" />
+              <span className="hidden xs:inline">Сгенерировать</span>
+              <span className="xs:hidden">Шаблоны</span>
             </button>
 
             <button
               onClick={() => setIsSettingsOpen(true)}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 hover:bg-zinc-100"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 hover:bg-zinc-100 sm:h-10 sm:w-10"
               aria-label="Настройки"
             >
-              <Settings size={18} />
+              <Settings size={16} className="sm:size-[18px]" />
             </button>
 
             <button
               onClick={resetToSeeds}
-              className="flex items-center gap-1.5 rounded-full border border-zinc-200 px-3 py-2 text-xs hover:bg-zinc-100"
+              className="flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-1 text-[10px] hover:bg-zinc-100 sm:gap-1.5 sm:px-3 sm:py-2 sm:text-xs"
               title="Сбросить к исходным шаблонам (2 по умолчанию)"
             >
-              <RotateCcw size={14} /> Сбросить
+              <RotateCcw size={12} className="sm:size-[14px]" /> Сбросить
             </button>
           </div>
         </div>
@@ -339,21 +453,114 @@ export default function LinguaEcho() {
 
       <main className="mx-auto max-w-6xl px-6 pt-8">
         <div className="flex gap-6">
-          {/* Vertical left sidebar for templates (easier to scroll down than horizontal list).
-              Selected is strongly highlighted. */}
-          <div className="w-72 flex-shrink-0">
+          {/* Vertical left sidebar / folders list. On mobile controlled by showList (toggle in navigator strip).
+              Hidden when collapsed so main practice area gets full width on narrow portrait screens.
+              Desktop (lg) keeps it always visible for power users. */}
+          <div className={`w-72 flex-shrink-0 ${showList ? 'block' : 'hidden lg:block'}`}>
             <div className="mb-2 flex items-center justify-between text-sm font-medium text-zinc-600">
-              <span>Мои шаблоны ({templates.length})</span>
-              <button onClick={resetToSeeds} className="text-xs text-zinc-500 hover:text-zinc-700">Сбросить (к 2)</button>
+              <span>
+                {activeFolder === 'learned' ? 'Изученные' : activeFolder && activeFolder !== 'active' ? activeFolder : 'Активные'}
+                {' '}({filteredTemplates.length})
+              </span>
+              <div className="flex items-center gap-2">
+                {/* Mobile-only: back to detail view (right panel) when in list mode. Hamburger icon for consistency with the list toggle. */}
+                <button
+                  onClick={() => setShowList(false)}
+                  className="lg:hidden text-xs rounded border border-zinc-200 px-2 py-0.5 hover:bg-zinc-50"
+                  title="К фразе"
+                >
+                  <Menu size={16} />
+                </button>
+              </div>
             </div>
 
-            <div className="max-h-[68vh] overflow-y-auto pr-1 space-y-1.5 border-r border-zinc-200">
-              {templates.map((t) => {
+            {/* Folder chips — quick filter + create. Horizontal scroll for many folders on small screens.
+                Also act as drop targets for drag & drop from the list (desktop). */}
+            <div className="mb-2 flex gap-1 overflow-x-auto pb-1 -mx-1 px-1">
+              {(['active', 'learned'] as const).concat(customFolders as any).map((f) => {
+                const label = f === 'active' ? 'Активные' : f === 'learned' ? 'Изученные' : f
+                const targetFolder = f === 'active' ? '' : f
+                const isCurrent = f === 'active' ? (activeFolder === '' || activeFolder === 'active') : activeFolder === f
+                return (
+                  <button
+                    key={f}
+                    onClick={() => {
+                      const target = f === 'active' ? '' : f
+                      setActiveFolder(target)
+                      // If the newly chosen folder doesn't contain the current template, auto-switch to first in that folder's list
+                      const wouldBe = getFilteredFor(target)
+                      if (wouldBe.length > 0 && !wouldBe.some(t => t.id === currentId)) {
+                        setCurrentId(wouldBe[0].id)
+                      }
+                    }}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      const draggedId = e.dataTransfer.getData('text/template-id')
+                      if (draggedId) {
+                        setTemplateFolder(draggedId, targetFolder)
+                        // Optionally follow the moved item
+                        if (activeFolder !== (targetFolder === '' ? '' : targetFolder)) {
+                          setActiveFolder(targetFolder === '' ? '' : targetFolder)
+                        }
+                      }
+                    }}
+                    className={`shrink-0 rounded-full border px-3 py-1 text-xs whitespace-nowrap transition active:scale-95 ${isCurrent ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-zinc-200 bg-white hover:bg-zinc-50'}`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
+              <button
+                onClick={() => {
+                  const name = prompt('Название новой папки?')?.trim()
+                  if (name) {
+                    addCustomFolder(name)
+                    setActiveFolder(name)
+                  }
+                }}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const draggedId = e.dataTransfer.getData('text/template-id')
+                  if (draggedId) {
+                    const name = prompt('Название новой папки?')?.trim()
+                    if (name) {
+                      addCustomFolder(name)
+                      setTemplateFolder(draggedId, name)
+                      setActiveFolder(name)
+                    }
+                  }
+                }}
+                className="shrink-0 rounded-full border border-dashed border-zinc-300 px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-50 active:scale-95"
+                title="Создать новую папку"
+              >
+                + Папка
+              </button>
+              <button
+                onClick={() => setIsFoldersManageOpen(true)}
+                className="shrink-0 rounded-full border border-zinc-300 px-1.5 py-1 text-xs text-zinc-500 hover:bg-zinc-50 active:scale-95"
+                title="Управление папками (переименовать / удалить)"
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            </div>
+
+            <div className="max-h-[60vh] lg:max-h-[68vh] overflow-y-auto pr-1 space-y-1.5 border-r border-zinc-200">
+              {filteredTemplates.map((t) => {
                 const isActive = t.id === currentId
                 return (
                   <div
                     key={t.id}
-                    onClick={() => switchTo(t.id)}
+                    onClick={() => {
+                      switchTo(t.id)
+                      // On mobile/iPhone: selecting from list should switch to the detail (right) panel exclusively
+                      if (typeof window !== 'undefined' && window.innerWidth < 1024) {
+                        setShowList(false)
+                      }
+                    }}
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData('text/template-id', t.id)}
                     className={`group relative flex cursor-pointer flex-col rounded-xl border px-3 py-2.5 text-left transition active:scale-[0.985] ${
                       isActive
                         ? 'border-indigo-500 bg-indigo-50 shadow-sm font-medium'
@@ -364,6 +571,9 @@ export default function LinguaEcho() {
                       {t.en}
                     </div>
                     <div className="mt-0.5 line-clamp-1 text-[11px] text-zinc-500">{t.ru}</div>
+                    {t.folder === 'learned' && (
+                      <div className="mt-0.5 text-[10px] text-emerald-600">Изучено</div>
+                    )}
 
                     <button
                       onClick={(e) => { e.stopPropagation(); deleteTemplate(t.id) }}
@@ -374,71 +584,176 @@ export default function LinguaEcho() {
                   </div>
                 )
               })}
+              {filteredTemplates.length === 0 && (
+                <div className="px-3 py-4 text-xs text-zinc-400">В этой папке пока пусто.</div>
+              )}
             </div>
           </div>
 
           {/* Main viewer area (the container) */}
-          <div className="flex-1 min-w-0">
+          {/* On mobile: exclusive with list — when showList=true we hide the detail so only left panel is visible */}
+          <div className={`flex-1 min-w-0 ${showList ? 'hidden lg:block' : 'block'}`}>
             {/* THE MAIN CONTAINER — bilingual + dual audio as requested */}
             <div className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm">
+            {/* Compact navigator: prev/next for sequential practice (big tap targets for kids) + list toggle (makes sidebar collapsible on small screens) */}
+            <div className="mb-4 flex items-center justify-between gap-2 border-b border-zinc-100 pb-3">
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={goPrev}
+                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 active:scale-95"
+                  aria-label="Предыдущий шаблон"
+                  disabled={filteredTemplates.findIndex(t => t.id === currentId) <= 0}
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <button
+                  onClick={goNext}
+                  className="flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:bg-zinc-50 active:scale-95"
+                  aria-label="Следующий шаблон"
+                  disabled={filteredTemplates.findIndex(t => t.id === currentId) >= filteredTemplates.length - 1}
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-zinc-500 tabular-nums">
+                {(() => {
+                  const idx = filteredTemplates.findIndex(t => t.id === currentId)
+                  const total = filteredTemplates.length
+                  if (total === 0) return '0 / 0'
+                  return idx >= 0 ? `${idx + 1} / ${total}` : `${total} в папке`
+                })()}
+                {current?.folder && current.folder !== '' && (
+                  <span className="ml-1 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-700">
+                    {current.folder === 'learned' ? 'Изучено' : current.folder}
+                  </span>
+                )}
+              </div>
+
+              <button
+                onClick={() => setShowList(s => !s)}
+                className="flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm hover:bg-zinc-50 active:scale-95 lg:hidden"
+                title={showList ? 'Скрыть список шаблонов' : 'Показать список и папки'}
+              >
+                <Menu size={16} />
+                <span className="hidden sm:inline">{showList ? 'Скрыть' : 'Шаблоны'}</span>
+              </button>
+            </div>
+
           {/* English text — prominent, large, readable for children */}
-          <div className="mb-1 text-[11px] font-medium uppercase tracking-[1.5px] text-indigo-600">АНГЛИЙСКИЙ</div>
-          <div className="text-balance text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950">
-            {current.en}
-          </div>
-
-          {/* Russian text */}
-          <div className="mt-5 text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">РУССКИЙ ПЕРЕВОД</div>
-          <div className="mt-1 text-2xl leading-snug text-zinc-700">
-            {current.ru}
-          </div>
-
-          {/* Audio section: elongated English player + simple Russian button on the right */}
-          <div className="mt-8 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-12">
-            {/* English — big elongated player (left, wide) */}
-            <div className="lg:col-span-8">
-              <EnglishPlayer
-                audioUrl={current.enAudioUrl}
-                fallbackText={current.en}
-                onRegenerate={() => handleRegenerateAudio(current.id)}
-              />
+          {/* If the current folder view is empty after moves, show empty state instead of phrase (list + numbering stay consistent with folder) */}
+          {filteredTemplates.length === 0 ? (
+            <div className="py-10 text-center">
+              <div className="text-2xl">Папка пуста</div>
+              <p className="mt-3 text-sm text-zinc-500">
+                В выбранной папке нет шаблонов.<br />
+                Откройте список шаблонов (кнопка вверху) и переключитесь на другую папку,<br />
+                или переместите/верните шаблоны сюда.
+              </p>
             </div>
+          ) : (
+            <>
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-[1.5px] text-indigo-600">АНГЛИЙСКИЙ</div>
+              <div className="text-balance text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950">
+                {current.en}
+              </div>
 
-            {/* Russian — one simple button on the right, no need to scroll/scrub */}
-            <div className="flex justify-center pt-1 lg:col-span-4 lg:justify-end lg:pt-0">
-              <RussianAudioButton
-                audioUrl={current.ruAudioUrl}
-                fallbackText={current.ru}
-                onRegenerate={() => handleRegenerateAudio(current.id)}
-              />
-            </div>
-          </div>
+              {/* Russian text + озвучка рядом — чтобы сразу было понятно, к чему кнопка относится (особенно в вертикальной ориентации) */}
+              <div className="mt-4 flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">РУССКИЙ ПЕРЕВОД</div>
+                  <div className="mt-1 text-2xl leading-snug text-zinc-700">
+                    {current.ru}
+                  </div>
+                </div>
+                <div className="flex-shrink-0 pt-1">
+                  <RussianAudioButton
+                    audioUrl={current.ruAudioUrl}
+                    fallbackText={current.ru}
+                    onRegenerate={() => handleRegenerateAudio(current.id)}
+                  />
+                </div>
+              </div>
 
-          {/* Bottom actions for current template */}
-          <div className="mt-6 flex flex-wrap gap-3 border-t pt-6 text-sm">
-            <button
-              onClick={() => deleteTemplate(current.id)}
-              className="flex items-center gap-2 rounded-xl border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50"
-            >
-              <Trash2 size={16} /> Удалить этот шаблон
-            </button>
+              {/* English player (main waveform) — full width below */}
+              <div className="mt-6">
+                <EnglishPlayer
+                  audioUrl={current.enAudioUrl}
+                  fallbackText={current.en}
+                  onRegenerate={() => handleRegenerateAudio(current.id)}
+                />
+              </div>
 
-            <button
-              onClick={() => {
-                const newEn = prompt('Новый английский текст:', current.en) || current.en
-                const newRu = prompt('Новый русский текст:', current.ru) || current.ru
-                if (newEn !== current.en || newRu !== current.ru) {
-                  setTemplates(ts => ts.map(t => t.id === current.id ? { ...t, en: newEn.trim(), ru: newRu.trim() } : t))
-                  toast('Текст обновлён')
-                }
-              }}
-              className="rounded-xl border border-zinc-200 px-4 py-2 hover:bg-zinc-50"
-            >
-              Редактировать тексты
-            </button>
+              {/* Bottom actions for current template */}
+              <div className="mt-6 flex flex-wrap gap-3 border-t pt-6 text-sm">
+                <button
+                  onClick={() => deleteTemplate(current.id)}
+                  className="flex items-center gap-2 rounded-xl border border-red-200 px-4 py-2 text-red-600 hover:bg-red-50"
+                >
+                  <Trash2 size={16} /> Удалить этот шаблон
+                </button>
 
-            <div className="flex-1" />
-          </div>
+                <button
+                  onClick={() => {
+                    const newEn = prompt('Новый английский текст:', current.en) || current.en
+                    const newRu = prompt('Новый русский текст:', current.ru) || current.ru
+                    if (newEn !== current.en || newRu !== current.ru) {
+                      setTemplates(ts => ts.map(t => t.id === current.id ? { ...t, en: newEn.trim(), ru: newRu.trim() } : t))
+                      toast('Текст обновлён')
+                    }
+                  }}
+                  className="rounded-xl border border-zinc-200 px-4 py-2 hover:bg-zinc-50"
+                >
+                  Редактировать тексты
+                </button>
+
+                {/* Mark as learned / unmark — moves to default 'learned' folder (or back). Primary way for kids to organize.
+                    After move: auto-advance to another item in the *current folder view* (so list + numbering stay consistent with the folder). */}
+                {current.folder !== 'learned' ? (
+                  <button
+                    onClick={() => {
+                      const id = current.id
+                      setTemplateFolder(id, 'learned')
+                      // Stay in current folder view and pick next/remaining from it
+                      const remaining = filteredTemplates.filter(t => t.id !== id)
+                      if (remaining.length > 0) {
+                        setCurrentId(remaining[0].id)
+                      }
+                      toast.success('Отмечено как изученное', { position: 'bottom-center' })
+                    }}
+                    className="flex items-center gap-1.5 rounded-xl border border-emerald-200 px-3 py-2 text-emerald-700 hover:bg-emerald-50"
+                  >
+                    <CheckCircle size={16} /> Отметить как изученное
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      const id = current.id
+                      setTemplateFolder(id, '')
+                      const remaining = filteredTemplates.filter(t => t.id !== id)
+                      if (remaining.length > 0) {
+                        setCurrentId(remaining[0].id)
+                      }
+                      toast('Вернули в активные', { position: 'bottom-center' })
+                    }}
+                    className="rounded-xl border border-zinc-200 px-3 py-2 hover:bg-zinc-50"
+                  >
+                    Вернуть в активные
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setIsMoveOpen(true)}
+                  className="rounded-xl border border-zinc-200 px-3 py-2 hover:bg-zinc-50"
+                  disabled={!current}
+                >
+                  Переместить в папку…
+                </button>
+
+                <div className="flex-1" />
+              </div>
+            </>
+          )}
         </div> {/* end of main container card */}
           </div> {/* end of viewer flex-1 */}
         </div> {/* end of sidebar + viewer flex */}
@@ -578,6 +893,120 @@ export default function LinguaEcho() {
             <div className="mt-3 text-center text-[11px] text-zinc-500">
               Для настоящей генерации и естественных голосов добавьте ключ xAI в Настройках (будет использован один ключ и для текста, и для TTS).
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Move to folder modal — reuses the exact same overlay/card pattern as Settings & Generate for consistency */}
+      {isMoveOpen && current && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsMoveOpen(false)}>
+          <div className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-lg font-semibold">Переместить «{current.en.slice(0, 40)}{current.en.length > 40 ? '…' : ''}»</div>
+            <p className="mt-1 text-sm text-zinc-600">Выберите папку или создайте новую.</p>
+
+            <div className="mt-4 space-y-2">
+              {['', 'learned', ...customFolders].map((f) => {
+                const label = f === '' ? 'Активные' : f === 'learned' ? 'Изученные' : f
+                const isCurrentFolder = (f === '' ? (current.folder || '') === '' : current.folder === f)
+                return (
+                  <button
+                    key={f || 'active'}
+                    onClick={() => {
+                      setTemplateFolder(current.id, f)
+                      setIsMoveOpen(false)
+                      // Follow the item into its new view for convenience
+                      setActiveFolder(f === '' ? '' : f)
+                      toast.success(`Перемещено в «${label}»`, { position: 'bottom-center' })
+                    }}
+                    disabled={isCurrentFolder}
+                    className={`w-full rounded-xl border px-4 py-3 text-left text-sm transition active:scale-[0.985] ${isCurrentFolder ? 'border-emerald-300 bg-emerald-50 text-emerald-700 cursor-default' : 'border-zinc-200 hover:bg-zinc-50'}`}
+                  >
+                    {label} {isCurrentFolder && '· текущая'}
+                  </button>
+                )
+              })}
+
+              <button
+                onClick={() => {
+                  const name = prompt('Название новой папки?')?.trim()
+                  if (name) {
+                    addCustomFolder(name)
+                    setTemplateFolder(current.id, name)
+                    setIsMoveOpen(false)
+                    setActiveFolder(name)
+                    toast.success(`Создана папка «${name}» и шаблон перемещён`, { position: 'bottom-center' })
+                  }
+                }}
+                className="w-full rounded-xl border border-dashed border-zinc-300 px-4 py-3 text-left text-sm text-zinc-600 hover:bg-zinc-50 active:scale-[0.985]"
+              >
+                + Создать новую папку и переместить туда
+              </button>
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => setIsMoveOpen(false)} className="rounded-2xl px-5 py-2 text-sm">Отмена</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Folders manage modal: rename + delete (safe move or destructive) for custom folders */}
+      {isFoldersManageOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setIsFoldersManageOpen(false)}>
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <div className="text-lg font-semibold">Управление папками</div>
+            <p className="mt-1 text-sm text-zinc-600">Переименование и удаление пользовательских папок.</p>
+
+            <div className="mt-4 space-y-3">
+              {customFolders.length === 0 && (
+                <div className="text-sm text-zinc-500">Пользовательских папок пока нет. Создайте через «+ Папка» или «Переместить в папку…».</div>
+              )}
+              {customFolders.map((name) => {
+                const count = templates.filter(t => t.folder === name).length
+                return (
+                  <div key={name} className="flex items-center justify-between rounded-xl border border-zinc-200 p-3 text-sm">
+                    <div>
+                      <div className="font-medium">{name}</div>
+                      <div className="text-[11px] text-zinc-500">{count} шаблон{count === 1 ? '' : count < 5 ? 'а' : 'ов'}</div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          const nn = prompt('Новое название папки', name)?.trim()
+                          if (nn) renameFolder(name, nn)
+                        }}
+                        className="rounded-lg border px-3 py-1 text-xs hover:bg-zinc-50"
+                      >
+                        Переименовать
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!confirm(`Удалить папку «${name}»?\nШаблоны будут перемещены в «Активные».`)) return
+                          deleteFolder(name, false)
+                        }}
+                        className="rounded-lg border px-3 py-1 text-xs hover:bg-zinc-50"
+                      >
+                        Удалить (переместить)
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (!confirm(`ВНИМАНИЕ!\nУдалить папку «${name}» и все ${count} шаблонов внутри?\nАудио будут удалены навсегда.`)) return
+                          deleteFolder(name, true)
+                        }}
+                        className="rounded-lg border border-red-200 px-3 py-1 text-xs text-red-600 hover:bg-red-50"
+                      >
+                        Удалить с шаблонами
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button onClick={() => setIsFoldersManageOpen(false)} className="rounded-2xl px-5 py-2 text-sm">Закрыть</button>
+            </div>
+            <p className="mt-3 text-[10px] text-zinc-400">Удаление папки не затрагивает «Активные» и «Изученные».</p>
           </div>
         </div>
       )}

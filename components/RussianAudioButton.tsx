@@ -74,7 +74,7 @@ export function RussianAudioButton({ audioUrl, fallbackText, onRegenerate }: Rus
       </button>
 
       <div className="text-center text-xs text-sky-700/80">
-        {isPlaying ? 'Играет...' : 'Одна кнопка — полная фраза'}
+        {isPlaying ? 'Играет...' : 'Play'}
       </div>
 
       {onRegenerate && (
