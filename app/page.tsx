@@ -100,6 +100,16 @@ export default function LinguaEcho() {
     toast(`Папка «${name}» удалена${deleteContents ? ' (вместе с шаблонами)' : ', шаблоны перемещены в Активные'}`)
   }
 
+  const handleDeleteFolder = (name: string) => {
+    if (!confirm(`Удалить папку «${name}»?\n\nВы сможете выбрать, что делать с шаблонами внутри.`)) return
+    const deleteTemplates = confirm(
+      `Для папки «${name}»:\n\n` +
+      `OK — Удалить папку И ВСЕ шаблоны внутри (необратимо, аудио тоже будут удалены)\n\n` +
+      `Отмена — Удалить папку и ПЕРЕМЕСТИТЬ все шаблоны в «Активные» (безопасно, шаблоны сохранятся)`
+    )
+    deleteFolder(name, deleteTemplates)
+  }
+
   // Pure helper so we can compute filtered in handlers before state commits
   const getFilteredFor = (folder: string, list: Template[] = templates) => {
     if (folder === 'learned') return list.filter(t => t.folder === 'learned')
@@ -365,36 +375,6 @@ export default function LinguaEcho() {
     }
   }
 
-  if (!current) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center p-8 text-center">
-        <div className="mb-4 text-2xl">Нет шаблонов</div>
-        <p className="mb-6 max-w-md text-zinc-600">
-          Вы удалили все шаблоны. Добавьте новые через кнопку «Сгенерировать шаблоны» или сбросьте к исходным.
-        </p>
-        <div className="flex gap-3">
-          <button
-            onClick={() => {
-              const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
-              setTemplates(seeded)
-              setCurrentId(seeded[0].id)
-              saveTemplates(seeded)
-            }}
-            className="rounded-xl bg-indigo-600 px-5 py-2 text-white"
-          >
-            Вернуть 2 исходных
-          </button>
-          <button
-            onClick={() => setIsGenerateOpen(true)}
-            className="rounded-xl border px-5 py-2"
-          >
-            Сгенерировать
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen pb-12">
       {/* Header */}
@@ -460,9 +440,9 @@ export default function LinguaEcho() {
                 const label = f === 'active' ? 'Активные' : f === 'learned' ? 'Изученные' : f
                 const targetFolder = f === 'active' ? '' : f
                 const isCurrent = f === 'active' ? (activeFolder === '' || activeFolder === 'active') : activeFolder === f
-                return (
+                const isCustom = f !== 'active' && f !== 'learned'
+                const chip = (
                   <button
-                    key={f}
                     onClick={() => {
                       const target = f === 'active' ? '' : f
                       setActiveFolder(target)
@@ -488,6 +468,22 @@ export default function LinguaEcho() {
                   >
                     {label}
                   </button>
+                )
+                if (!isCustom) return chip
+                return (
+                  <div key={f} className="flex items-center">
+                    {chip}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleDeleteFolder(f)
+                      }}
+                      className="ml-0.5 text-red-400 hover:text-red-600 text-xs px-1"
+                      title={`Удалить папку «${f}»`}
+                    >
+                      ×
+                    </button>
+                  </div>
                 )
               })}
               <button
@@ -621,7 +617,33 @@ export default function LinguaEcho() {
 
           {/* English text — prominent, large, readable for children */}
           {/* If the current folder view is empty after moves, show empty state instead of phrase (list + numbering stay consistent with folder) */}
-          {filteredTemplates.length === 0 ? (
+          {templates.length === 0 ? (
+            <div className="py-10 text-center">
+              <div className="mb-4 text-2xl">Вы удалили все шаблоны</div>
+              <p className="mb-6 max-w-md text-zinc-600">
+                Добавьте новые через кнопку «Сгенерировать шаблоны» или верните исходные.
+              </p>
+              <div className="flex gap-3 justify-center">
+                <button
+                  onClick={() => {
+                    const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
+                    setTemplates(seeded)
+                    setCurrentId(seeded[0].id)
+                    saveTemplates(seeded)
+                  }}
+                  className="rounded-xl bg-indigo-600 px-5 py-2 text-white"
+                >
+                  Вернуть 2 исходных
+                </button>
+                <button
+                  onClick={() => setIsGenerateOpen(true)}
+                  className="rounded-xl border px-5 py-2"
+                >
+                  Сгенерировать
+                </button>
+              </div>
+            </div>
+          ) : filteredTemplates.length === 0 ? (
             <div className="py-10 text-center">
               <div className="text-2xl">Папка пуста</div>
               <p className="mt-3 text-sm text-zinc-500">
