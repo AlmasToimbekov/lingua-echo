@@ -139,6 +139,16 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     }
   }, [audioUrl])
 
+  const getResetPosition = useCallback(() => {
+    const regions = regionsRef.current
+    if (regions && hasRegion) {
+      const all = regions.getRegions ? regions.getRegions() : []
+      const last = all.length > 0 ? all[all.length - 1] : null
+      if (last) return last.start as number
+    }
+    return 0
+  }, [hasRegion])
+
   const togglePlay = () => {
     if (usingFallback) {
       if (isPlaying) {
@@ -161,10 +171,10 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     // to avoid desync (common on iOS with rapid taps/seeks/regions)
     if (isPlaying) {
       try { ws.pause() } catch {}
-      const startPos = lastPlayPositionRef.current ?? 0
+      const resetPos = getResetPosition()
       try {
-        ws.seekTo(startPos / (duration || 1))
-        setCurrentTime(startPos)
+        ws.seekTo(resetPos / (duration || 1))
+        setCurrentTime(resetPos)
       } catch {}
       lastPlayPositionRef.current = null
       setIsPlaying(false)
@@ -404,7 +414,7 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
       <p className="mt-1 text-[11px] text-zinc-500">
         {usingFallback
-          ? 'Демо-озвучка браузером. Добавьте ключ ElevenLabs для естественной речи (и Gemini — для генерации шаблонов).'
+          ? 'Демо-озвучка браузером. Добавьте ключ ElevenLabs для естественной английской речи (и Gemini — для генерации шаблонов).'
           : 'Клик по волне — переместить позицию. Кнопки -1s/-3s/|<< — точный контроль. Для детей: «Выделить первые 0,5с» создаёт видимый регион в начале, потом тяните края/весь регион мышкой и зацикливайте на 0.75×.'}
       </p>
     </div>

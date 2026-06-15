@@ -140,7 +140,7 @@ export default function LinguaEcho() {
   const [genTopic, setGenTopic] = useState('Семья')
   const [genCustomTopic, setGenCustomTopic] = useState(initialGenCustomTopic)
   const [genComplexity, setGenComplexity] = useState(1)
-  const [genCount, setGenCount] = useState(8)
+  const [genCount, setGenCount] = useState(2)
   const [genIsAdult, setGenIsAdult] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
 
@@ -392,33 +392,24 @@ export default function LinguaEcho() {
         toast.loading(`Генерируем аудио ${i + 1} из ${generated.length}...`, { id: 'gen-progress' })
 
         let enBlob: Blob | null = null
-        let ruBlob: Blob | null = null
 
         if (settings.elevenKey) {
           try {
             enBlob = await generateAudio(g.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
           } catch (e) { console.warn('EN ElevenLabs failed', e) }
-          try {
-            ruBlob = await generateAudio(g.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
-          } catch (e) { console.warn('RU ElevenLabs failed', e) }
         }
 
         const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
-        const ruAudioUrl = ruBlob ? URL.createObjectURL(ruBlob) : undefined
 
         // Persist the actual audio bytes so they survive page refresh (Phase 2)
         if (enBlob) {
           const enBuffer = await enBlob.arrayBuffer()
           await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
         }
-        if (ruBlob) {
-          const ruBuffer = await ruBlob.arrayBuffer()
-          await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
-        }
 
         // Inherit current custom/active folder for new items (unless viewing learned)
         const newItemFolder = (activeFolder && activeFolder !== 'learned') ? activeFolder : ''
-        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl, folder: newItemFolder })
+        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, folder: newItemFolder })
       }
       toast.dismiss('gen-progress')
 
@@ -427,9 +418,14 @@ export default function LinguaEcho() {
       setCurrentId(final[0].id)
 
       setIsGenerateOpen(false)
-      toast.success(`${final.length} новых шаблонов добавлено с помощью Gemini + ElevenLabs.`)
+      const voiceNote = settings.elevenKey ? ' (английская озвучка — ElevenLabs)' : ''
+      toast.success(`${final.length} новых шаблонов добавлено с помощью Gemini${voiceNote}.`)
     } catch (err: any) {
-      toast.error(err?.message || 'Ошибка генерации. Проверьте ключи Gemini и/или ElevenLabs.')
+      toast.dismiss('gen-progress')
+      toast.error(
+        err?.message || 'Ошибка генерации. Проверьте ключ Gemini или попробуйте ещё раз (иногда помогает повтор).',
+        { id: 'gen-error', duration: Infinity }
+      )
     } finally {
       setIsGenerating(false)
       toast.dismiss('gen-progress')
@@ -443,27 +439,20 @@ export default function LinguaEcho() {
       return
     }
     try {
-      toast.loading('Перегенерируем аудио...', { id: 'regen' })
+      toast.loading('Перегенерируем английскую озвучку...', { id: 'regen' })
       const enBlob = await generateAudio(tpl.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
-      const ruBlob = await generateAudio(tpl.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
 
       const newEnUrl = enBlob ? URL.createObjectURL(enBlob) : tpl.enAudioUrl
-      const newRuUrl = ruBlob ? URL.createObjectURL(ruBlob) : tpl.ruAudioUrl
 
       // Persist the new audio bytes (replaces previous stored version)
       if (enBlob) {
         const enBuffer = await enBlob.arrayBuffer()
         await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
       }
-      if (ruBlob) {
-        const ruBuffer = await ruBlob.arrayBuffer()
-        await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
-      }
 
       if (tpl.enAudioUrl && tpl.enAudioUrl !== newEnUrl) { try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {} }
-      if (tpl.ruAudioUrl && tpl.ruAudioUrl !== newRuUrl) { try { URL.revokeObjectURL(tpl.ruAudioUrl) } catch {} }
 
-      setTemplates(ts => ts.map(t => t.id === id ? { ...t, enAudioUrl: newEnUrl, ruAudioUrl: newRuUrl } : t))
+      setTemplates(ts => ts.map(t => t.id === id ? { ...t, enAudioUrl: newEnUrl } : t))
       toast.success('Аудио обновлено', { id: 'regen' })
     } catch (e: any) {
       toast.error(e?.message || 'Не удалось перегенерировать', { id: 'regen' })
@@ -796,9 +785,7 @@ export default function LinguaEcho() {
                 <div className="flex items-center gap-2">
                   <div className="text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">РУССКИЙ ПЕРЕВОД</div>
                   <RussianAudioButton
-                    audioUrl={current.ruAudioUrl}
                     fallbackText={current.ru}
-                    onRegenerate={() => handleRegenerateAudio(current.id)}
                     compact
                   />
                 </div>
@@ -936,7 +923,7 @@ export default function LinguaEcho() {
 
               {/* ElevenLabs for voice (primary) */}
               <div>
-                <label className="block font-medium text-slate-800">Ключ ElevenLabs (для естественной озвучки)</label>
+                <label className="block font-medium text-slate-800">Ключ ElevenLabs (для английской озвучки)</label>
                 <input
                   type="password"
                   value={settings.elevenKey}
@@ -945,7 +932,7 @@ export default function LinguaEcho() {
                   className="mt-1 w-full rounded-xl border px-4 py-2.5 font-mono text-sm"
                 />
                 <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" className="text-xs text-indigo-600 underline">Получить ключ ElevenLabs</a>
-                <p className="mt-1 text-[11px] text-slate-600">Используется для высококачественной озвучки английского и русского (рекомендуется).</p>
+                <p className="mt-1 text-[11px] text-slate-600">Только для английской фразы (платный сервис). Русский перевод озвучивается браузером — бесплатно.</p>
               </div>
 
               <div className="text-[10px] text-slate-500 border-t pt-3">

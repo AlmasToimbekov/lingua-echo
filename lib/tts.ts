@@ -1,6 +1,6 @@
 // Unified TTS layer for MVP.
-// Primary: ElevenLabs (natural voices for EN Am + RU).
-// Fallback: browser speechSynthesis.
+// Primary: ElevenLabs (natural American English only — saves paid tokens).
+// Russian uses browser speechSynthesis in RussianAudioButton.
 
 export type TTSProvider = 'elevenlabs' | 'browser'
 
@@ -34,7 +34,7 @@ export async function generateAudio(
       },
       body: JSON.stringify({
         text,
-        model_id: 'eleven_multilingual_v2', // good quality + supports Russian
+        model_id: 'eleven_multilingual_v2',
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,
