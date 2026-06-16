@@ -6,20 +6,29 @@ import { Volume2, Square } from 'lucide-react'
 interface RussianAudioButtonProps {
   fallbackText: string
   compact?: boolean
+  onManualPlayPause?: () => void
+  suspendAutoStopOnTextChange?: boolean
 }
 
-export function RussianAudioButton({ fallbackText, compact = false }: RussianAudioButtonProps) {
+export function RussianAudioButton({
+  fallbackText,
+  compact = false,
+  onManualPlayPause,
+  suspendAutoStopOnTextChange = false,
+}: RussianAudioButtonProps) {
   const [isPlaying, setIsPlaying] = useState(false)
 
-  // When the template changes, stop any previous playback.
+  // When the template changes, stop any previous playback (unless study sequence is driving audio).
   React.useEffect(() => {
+    if (suspendAutoStopOnTextChange) return
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }
     setIsPlaying(false)
-  }, [fallbackText])
+  }, [fallbackText, suspendAutoStopOnTextChange])
 
   const play = () => {
+    onManualPlayPause?.()
     if (!('speechSynthesis' in window)) return
     window.speechSynthesis.cancel()
     const utter = new SpeechSynthesisUtterance(fallbackText)
@@ -30,6 +39,7 @@ export function RussianAudioButton({ fallbackText, compact = false }: RussianAud
   }
 
   const stop = () => {
+    onManualPlayPause?.()
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel()
     }

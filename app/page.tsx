@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Settings, Plus, RotateCcw, Trash2, X, ChevronLeft, ChevronRight, CheckCircle, Folder, Menu, MoreHorizontal } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Settings, Plus, RotateCcw, Trash2, X, ChevronLeft, ChevronRight, CheckCircle, Folder, Menu, MoreHorizontal, Repeat, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { Template } from '../lib/types'
 import { SEED_TEMPLATES } from '../lib/seed'
@@ -17,6 +17,8 @@ import { generateAudio } from '../lib/tts'
 import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
 import { RussianAudioButton } from '../components/RussianAudioButton'
+import { useStudySequence } from '../hooks/useStudySequence'
+import { setActiveStudySequencePlaybackRate } from '../lib/studySequence'
 
 const SETTINGS_KEY = 'lingua-echo:settings'
 const UI_STATE_KEY = 'lingua-echo:ui'
@@ -47,6 +49,8 @@ export default function LinguaEcho() {
   let initialGenCustomTopic = ''
   let initialActiveFolder = ''
   let initialLastCurrentId = ''
+  let initialStudyEnRepetitions = 4
+  let initialEnglishPlaybackRate = 1
   try {
     const raw = localStorage.getItem(UI_STATE_KEY)
     if (raw) {
@@ -54,6 +58,10 @@ export default function LinguaEcho() {
       initialGenCustomTopic = p.genCustomTopic || ''
       initialActiveFolder = p.activeFolder || ''
       initialLastCurrentId = p.lastCurrentId || ''
+      const reps = Number(p.studyEnRepetitions)
+      if (reps >= 1 && reps <= 10) initialStudyEnRepetitions = reps
+      const rate = Number(p.englishPlaybackRate)
+      if (rate >= 0.6 && rate <= 1.4) initialEnglishPlaybackRate = rate
     }
   } catch {}
 
@@ -69,6 +77,8 @@ export default function LinguaEcho() {
   const [isMoveOpen, setIsMoveOpen] = useState(false)
   const [customFolders, setCustomFolders] = useState<string[]>([])
   const [isFoldersManageOpen, setIsFoldersManageOpen] = useState(false)
+  const [studyEnRepetitions, setStudyEnRepetitions] = useState(initialStudyEnRepetitions)
+  const [englishPlaybackRate, setEnglishPlaybackRate] = useState(initialEnglishPlaybackRate)
 
   const FOLDERS_KEY = 'lingua-echo:folders'
 
@@ -286,6 +296,42 @@ export default function LinguaEcho() {
     } catch {}
   }, [currentId])
 
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, studyEnRepetitions }))
+    } catch {}
+  }, [studyEnRepetitions])
+
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, englishPlaybackRate }))
+    } catch {}
+    setActiveStudySequencePlaybackRate(englishPlaybackRate)
+  }, [englishPlaybackRate])
+
+  const clampStudyEnRepetitions = (value: number) => Math.min(10, Math.max(1, value))
+
+  const handleStudyEnRepetitionsChange = (raw: string) => {
+    const parsed = parseInt(raw, 10)
+    if (Number.isNaN(parsed)) return
+    setStudyEnRepetitions(clampStudyEnRepetitions(parsed))
+  }
+
+  const handleEnglishPlaybackRateChange = useCallback((rate: number) => {
+    setEnglishPlaybackRate(rate)
+    setActiveStudySequencePlaybackRate(rate)
+  }, [])
+
+  const studySequenceOptions = useMemo(
+    () => ({
+      getEnglishRepetitions: () => studyEnRepetitions,
+      getPlaybackRate: () => englishPlaybackRate,
+    }),
+    [studyEnRepetitions, englishPlaybackRate]
+  )
+
   const current = templates.find(t => t.id === currentId) || templates[0]
 
   const switchTo = (id: string) => setCurrentId(id)
@@ -296,6 +342,25 @@ export default function LinguaEcho() {
   }, [customFolders])
 
   const filteredTemplates = useMemo(() => getFilteredFor(activeFolder), [activeFolder, templates])
+
+  const {
+    isStudySequenceActive,
+    toggleStudySequence,
+    onManualAudioInteraction,
+  } = useStudySequence({
+    filteredTemplates,
+    currentId,
+    setCurrentId,
+    activeFolder,
+    sequenceOptions: studySequenceOptions,
+  })
+
+  const activeFolderLabel =
+    activeFolder === 'learned'
+      ? 'Изученные'
+      : activeFolder && activeFolder !== 'active'
+        ? activeFolder
+        : 'Активные'
 
   // Prev/next and counter now scoped to the current folder's list (as requested)
   const goPrev = () => {
@@ -775,6 +840,52 @@ export default function LinguaEcho() {
             </div>
           ) : (
             <>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <button
+                  onClick={toggleStudySequence}
+                  className={`flex items-center gap-2 rounded-2xl border-2 px-4 py-2.5 text-sm font-medium transition active:scale-[0.98] ${
+                    isStudySequenceActive
+                      ? 'border-amber-400 bg-amber-50 text-amber-800 shadow-sm'
+                      : 'border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100'
+                  }`}
+                  title={
+                    isStudySequenceActive
+                      ? 'Остановить автоматическую тренировку папки'
+                      : `Автоматически пройти все шаблоны в текущей папке: русский → английский (×${studyEnRepetitions}) → русский`
+                  }
+                >
+                  {isStudySequenceActive ? (
+                    <Square size={18} className="fill-current" />
+                  ) : (
+                    <Repeat size={18} />
+                  )}
+                  <span>
+                    {isStudySequenceActive
+                      ? 'Остановить тренировку'
+                      : `Тренировка папки «${activeFolderLabel}»`}
+                  </span>
+                </button>
+
+                <label className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
+                  <span className="text-xs uppercase tracking-wide text-zinc-500">EN×</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={studyEnRepetitions}
+                    onChange={(e) => handleStudyEnRepetitionsChange(e.target.value)}
+                    className="w-12 rounded-lg border border-zinc-200 px-2 py-1 text-center text-sm tabular-nums"
+                    aria-label="Сколько раз повторять английскую фразу в тренировке"
+                  />
+                </label>
+
+                {isStudySequenceActive && (
+                  <span className="text-xs text-amber-700">
+                    РУ → EN×{studyEnRepetitions} → РУ · далее следующий шаблон
+                  </span>
+                )}
+              </div>
+
               <div className="mb-1 text-[11px] font-medium uppercase tracking-[1.5px] text-indigo-600">АНГЛИЙСКИЙ</div>
               <div className="text-balance text-3xl sm:text-4xl font-semibold leading-tight tracking-[-0.3px] text-zinc-950 break-words">
                 {current.en}
@@ -787,6 +898,8 @@ export default function LinguaEcho() {
                   <RussianAudioButton
                     fallbackText={current.ru}
                     compact
+                    onManualPlayPause={onManualAudioInteraction}
+                    suspendAutoStopOnTextChange={isStudySequenceActive}
                   />
                 </div>
                 <div className="mt-1 text-xl sm:text-2xl leading-snug text-zinc-700 break-words">
@@ -800,6 +913,9 @@ export default function LinguaEcho() {
                   audioUrl={current.enAudioUrl}
                   fallbackText={current.en}
                   onRegenerate={() => handleRegenerateAudio(current.id)}
+                  onManualPlayPause={onManualAudioInteraction}
+                  playbackRate={englishPlaybackRate}
+                  onPlaybackRateChange={handleEnglishPlaybackRateChange}
                 />
               </div>
 

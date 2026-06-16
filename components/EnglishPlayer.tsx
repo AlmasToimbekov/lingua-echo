@@ -9,9 +9,19 @@ interface EnglishPlayerProps {
   audioUrl?: string
   fallbackText: string // for browser speechSynthesis when no audioUrl
   onRegenerate?: () => void
+  onManualPlayPause?: () => void
+  playbackRate?: number
+  onPlaybackRateChange?: (rate: number) => void
 }
 
-export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishPlayerProps) {
+export function EnglishPlayer({
+  audioUrl,
+  fallbackText,
+  onRegenerate,
+  onManualPlayPause,
+  playbackRate: playbackRateProp,
+  onPlaybackRateChange,
+}: EnglishPlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const wsRef = useRef<WaveSurfer | null>(null)
   const regionsRef = useRef<any>(null)
@@ -24,7 +34,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
-  const [playbackRate, setPlaybackRate] = useState(1)
+  const [internalPlaybackRate, setInternalPlaybackRate] = useState(1)
+  const playbackRate = onPlaybackRateChange ? (playbackRateProp ?? 1) : internalPlaybackRate
   const [hasRegion, setHasRegion] = useState(false)
   const [isLooping, setIsLooping] = useState(false)
   const [usingFallback, setUsingFallback] = useState(false)
@@ -101,6 +112,7 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
 
     ws.on('ready', () => {
       setDuration(ws.getDuration())
+      ws.setPlaybackRate(playbackRate)
     })
 
     ws.on('timeupdate', (time: number) => {
@@ -139,6 +151,11 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
     }
   }, [audioUrl])
 
+  useEffect(() => {
+    const ws = wsRef.current
+    if (ws) ws.setPlaybackRate(playbackRate)
+  }, [playbackRate])
+
   const getResetPosition = useCallback(() => {
     const regions = regionsRef.current
     if (regions && hasRegion) {
@@ -150,6 +167,8 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   }, [hasRegion])
 
   const togglePlay = () => {
+    onManualPlayPause?.()
+
     if (usingFallback) {
       if (isPlaying) {
         stopFallback()
@@ -217,7 +236,11 @@ export function EnglishPlayer({ audioUrl, fallbackText, onRegenerate }: EnglishP
   }
 
   const changeRate = (rate: number) => {
-    setPlaybackRate(rate)
+    if (onPlaybackRateChange) {
+      onPlaybackRateChange(rate)
+    } else {
+      setInternalPlaybackRate(rate)
+    }
     const ws = wsRef.current
     if (ws) ws.setPlaybackRate(rate)
     // For fallback we apply on next speak
