@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'
 import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import { Play, Pause, Trash2 } from 'lucide-react'
+import { speakText } from '../lib/speechPlayback'
 
 interface EnglishPlayerProps {
   audioUrl?: string
@@ -50,13 +51,10 @@ export function EnglishPlayer({
   // Fallback using Web Speech API (for seeds before keys / audio generated)
   const speakFallback = useCallback((rate = 1) => {
     if (!('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(fallbackText)
-    utter.lang = 'en-US'
-    utter.rate = rate
-    utter.onend = () => setIsPlaying(false)
-    window.speechSynthesis.speak(utter)
     setIsPlaying(true)
+    speakText(fallbackText, 'en-US', undefined, rate)
+      .catch(() => {})
+      .finally(() => setIsPlaying(false))
   }, [fallbackText])
 
   const stopFallback = useCallback(() => {

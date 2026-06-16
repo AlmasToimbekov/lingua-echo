@@ -2,12 +2,14 @@
 
 import React, { useState } from 'react'
 import { Volume2, Square } from 'lucide-react'
+import { speakText } from '../lib/speechPlayback'
 
 interface RussianAudioButtonProps {
   fallbackText: string
   compact?: boolean
   onManualPlayPause?: () => void
   suspendAutoStopOnTextChange?: boolean
+  playbackRate?: number
 }
 
 export function RussianAudioButton({
@@ -15,6 +17,7 @@ export function RussianAudioButton({
   compact = false,
   onManualPlayPause,
   suspendAutoStopOnTextChange = false,
+  playbackRate = 1,
 }: RussianAudioButtonProps) {
   const [isPlaying, setIsPlaying] = useState(false)
 
@@ -30,12 +33,10 @@ export function RussianAudioButton({
   const play = () => {
     onManualPlayPause?.()
     if (!('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(fallbackText)
-    utter.lang = 'ru-RU'
-    utter.onend = () => setIsPlaying(false)
-    window.speechSynthesis.speak(utter)
     setIsPlaying(true)
+    speakText(fallbackText, 'ru-RU', undefined, playbackRate)
+      .catch(() => {})
+      .finally(() => setIsPlaying(false))
   }
 
   const stop = () => {

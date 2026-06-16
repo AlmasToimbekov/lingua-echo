@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Template } from '../lib/types'
-import { runStudySequence, stopStudySequenceAudio, StudySequenceOptions } from '../lib/studySequence'
+import {
+  primeStudySequenceAudio,
+  runStudySequence,
+  stopStudySequenceAudio,
+  StudySequenceOptions,
+} from '../lib/studySequence'
 
 type UseStudySequenceOptions = {
   filteredTemplates: Template[]
@@ -42,6 +47,9 @@ export function useStudySequence({
     }
 
     if (filteredTemplates.length === 0) return
+
+    // Must run in the same user gesture — unlocks chained HTMLAudio playback on iOS.
+    primeStudySequenceAudio()
 
     const startIdx = filteredTemplates.findIndex((t) => t.id === currentId)
     const index = startIdx >= 0 ? startIdx : 0

@@ -1,10 +1,36 @@
 import { Template } from './types'
+import { isIOS, speakText } from './speechPlayback'
 
 let activeAudio: HTMLAudioElement | null = null
+let sharedAudio: HTMLAudioElement | null = null
+
+// Tiny silent MP3 — played during the user tap to unlock iOS chained audio playback.
+const SILENT_MP3 =
+  'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIAAANIAAAAQAAAaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV'
 
 export type StudySequenceOptions = {
   getEnglishRepetitions: () => number
   getPlaybackRate: () => number
+}
+
+function getSharedAudio(): HTMLAudioElement {
+  if (!sharedAudio) {
+    sharedAudio = document.createElement('audio')
+    sharedAudio.setAttribute('playsinline', 'true')
+    sharedAudio.setAttribute('webkit-playsinline', 'true')
+    sharedAudio.preload = 'auto'
+  }
+  return sharedAudio
+}
+
+/** Call synchronously inside the user tap that starts folder training (unlocks iOS audio). */
+export function primeStudySequenceAudio() {
+  if (typeof window === 'undefined') return
+  const audio = getSharedAudio()
+  audio.src = SILENT_MP3
+  audio.play().catch(() => {})
+  audio.pause()
+  audio.currentTime = 0
 }
 
 export function setActiveStudySequencePlaybackRate(rate: number) {
@@ -14,7 +40,8 @@ export function setActiveStudySequencePlaybackRate(rate: number) {
 export function stopStudySequenceAudio() {
   if (activeAudio) {
     activeAudio.pause()
-    activeAudio.src = ''
+    activeAudio.removeAttribute('src')
+    activeAudio.load()
     activeAudio = null
   }
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -45,38 +72,9 @@ function playSpeech(
   text: string,
   lang: string,
   signal: AbortSignal,
-  rate?: number
+  rate: number
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    if (!('speechSynthesis' in window)) {
-      resolve()
-      return
-    }
-
-    window.speechSynthesis.cancel()
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = lang
-    if (rate !== undefined) utter.rate = rate
-
-    const onAbort = () => {
-      window.speechSynthesis.cancel()
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    signal.addEventListener('abort', onAbort)
-
-    const finish = () => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }
-
-    utter.onend = finish
-    utter.onerror = finish
-    window.speechSynthesis.speak(utter)
-  })
+  return speakText(text, lang, signal, rate)
 }
 
 function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): Promise<void> {
@@ -86,31 +84,62 @@ function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): P
       return
     }
 
-    if (activeAudio) {
-      activeAudio.pause()
-      activeAudio.src = ''
-    }
-
-    const audio = new Audio(url)
-    audio.playbackRate = playbackRate
+    const audio = getSharedAudio()
     activeAudio = audio
+
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      audio.onended = null
+      audio.onerror = null
+      audio.oncanplaythrough = null
+      if (activeAudio === audio) activeAudio = null
+      resolve()
+    }
 
     const onAbort = () => {
       audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
       if (activeAudio === audio) activeAudio = null
       reject(new DOMException('Aborted', 'AbortError'))
     }
     signal.addEventListener('abort', onAbort)
 
-    const finish = () => {
-      signal.removeEventListener('abort', onAbort)
-      if (activeAudio === audio) activeAudio = null
-      resolve()
+    const attemptPlay = (attempt = 0) => {
+      if (signal.aborted || settled) return
+      audio.playbackRate = playbackRate
+      audio
+        .play()
+        .catch(() => {
+          if (attempt < 4) {
+            setTimeout(() => attemptPlay(attempt + 1), isIOS() ? 120 : 60)
+          } else {
+            finish()
+          }
+        })
+    }
+
+    const startWhenReady = () => {
+      audio.oncanplaythrough = null
+      attemptPlay()
     }
 
     audio.onended = finish
     audio.onerror = finish
-    audio.play().catch(finish)
+
+    audio.pause()
+    audio.currentTime = 0
+    audio.src = url
+    audio.load()
+
+    if (audio.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+      startWhenReady()
+    } else {
+      audio.oncanplaythrough = startWhenReady
+    }
   })
 }
 
@@ -131,14 +160,16 @@ async function playTemplateSteps(
   signal: AbortSignal,
   options: StudySequenceOptions
 ) {
-  await playSpeech(template.ru, 'ru-RU', signal)
+  const getRate = options.getPlaybackRate
+
+  await playSpeech(template.ru, 'ru-RU', signal, getRate())
   await wait(1000, signal)
 
   let i = 0
   while (true) {
     const repetitions = Math.min(10, Math.max(1, options.getEnglishRepetitions()))
     if (i >= repetitions) break
-    await playEnglish(template, signal, options.getPlaybackRate)
+    await playEnglish(template, signal, getRate)
     i++
     if (i < Math.min(10, Math.max(1, options.getEnglishRepetitions()))) {
       await wait(700, signal)
@@ -146,7 +177,7 @@ async function playTemplateSteps(
   }
 
   await wait(1000, signal)
-  await playSpeech(template.ru, 'ru-RU', signal)
+  await playSpeech(template.ru, 'ru-RU', signal, getRate())
   await wait(1500, signal)
 }
 

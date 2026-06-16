@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+.study-rep-wheel {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.study-rep-wheel::-webkit-scrollbar {
+  display: none;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -31,6 +40,10 @@ body {
 .main-content-area,
 button {
   touch-action: manipulation;
+}
+
+.study-rep-wheel {
+  touch-action: pan-y;
 }
 
 /* Secondary / help text — much higher contrast than zinc-500 on white */

@@ -17,6 +17,7 @@ import { generateAudio } from '../lib/tts'
 import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
 import { RussianAudioButton } from '../components/RussianAudioButton'
+import { StudyRepetitionsPicker } from '../components/StudyRepetitionsPicker'
 import { useStudySequence } from '../hooks/useStudySequence'
 import { setActiveStudySequencePlaybackRate } from '../lib/studySequence'
 
@@ -310,14 +311,6 @@ export default function LinguaEcho() {
     } catch {}
     setActiveStudySequencePlaybackRate(englishPlaybackRate)
   }, [englishPlaybackRate])
-
-  const clampStudyEnRepetitions = (value: number) => Math.min(10, Math.max(1, value))
-
-  const handleStudyEnRepetitionsChange = (raw: string) => {
-    const parsed = parseInt(raw, 10)
-    if (Number.isNaN(parsed)) return
-    setStudyEnRepetitions(clampStudyEnRepetitions(parsed))
-  }
 
   const handleEnglishPlaybackRateChange = useCallback((rate: number) => {
     setEnglishPlaybackRate(rate)
@@ -866,18 +859,10 @@ export default function LinguaEcho() {
                   </span>
                 </button>
 
-                <label className="flex items-center gap-2 rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700">
-                  <span className="text-xs uppercase tracking-wide text-zinc-500">EN×</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={studyEnRepetitions}
-                    onChange={(e) => handleStudyEnRepetitionsChange(e.target.value)}
-                    className="w-12 rounded-lg border border-zinc-200 px-2 py-1 text-center text-sm tabular-nums"
-                    aria-label="Сколько раз повторять английскую фразу в тренировке"
-                  />
-                </label>
+                <StudyRepetitionsPicker
+                  value={studyEnRepetitions}
+                  onChange={setStudyEnRepetitions}
+                />
 
                 {isStudySequenceActive && (
                   <span className="text-xs text-amber-700">
@@ -900,6 +885,7 @@ export default function LinguaEcho() {
                     compact
                     onManualPlayPause={onManualAudioInteraction}
                     suspendAutoStopOnTextChange={isStudySequenceActive}
+                    playbackRate={englishPlaybackRate}
                   />
                 </div>
                 <div className="mt-1 text-xl sm:text-2xl leading-snug text-zinc-700 break-words">
