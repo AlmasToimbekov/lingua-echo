@@ -66,7 +66,8 @@ export function useStudySequence({
       controller.signal,
       {
         getEnglishRepetitions: () => sequenceOptionsRef.current.getEnglishRepetitions(),
-        getPlaybackRate: () => sequenceOptionsRef.current.getPlaybackRate(),
+        getEnglishPlaybackRate: () => sequenceOptionsRef.current.getEnglishPlaybackRate(),
+        getRussianPlaybackRate: () => sequenceOptionsRef.current.getRussianPlaybackRate(),
       }
     )
       .catch(() => {})

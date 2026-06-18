@@ -4,7 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Settings, Plus, RotateCcw, Trash2, X, ChevronLeft, ChevronRight, CheckCircle, Folder, Menu, MoreHorizontal, Repeat, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import { Template } from '../lib/types'
-import { SEED_TEMPLATES } from '../lib/seed'
+import { createSeedDeck } from '../lib/seed'
+import { applyLazySeedAudio, isSeedTemplate } from '../lib/seedAudio'
 import { loadTemplates, saveTemplates, revokeUnusedAudioUrls } from '../lib/storage'
 import {
   saveAudioBuffer,
@@ -13,13 +14,21 @@ import {
   clearAllAudio,
   createObjectUrlFromBuffer,
 } from '../lib/audioStorage'
+import {
+  elevenLabsToastMessage,
+  elevenLabsToastOptions,
+  isElevenLabsUserError,
+} from '../lib/elevenLabsErrors'
 import { generateAudio } from '../lib/tts'
 import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
 import { RussianAudioButton } from '../components/RussianAudioButton'
 import { StudyRepetitionsPicker } from '../components/StudyRepetitionsPicker'
 import { useStudySequence } from '../hooks/useStudySequence'
-import { setActiveStudySequencePlaybackRate } from '../lib/studySequence'
+import {
+  setActiveStudySequenceEnglishRate,
+  setActiveStudySequenceRussianRate,
+} from '../lib/studySequence'
 
 const SETTINGS_KEY = 'lingua-echo:settings'
 const UI_STATE_KEY = 'lingua-echo:ui'
@@ -52,6 +61,7 @@ export default function LinguaEcho() {
   let initialLastCurrentId = ''
   let initialStudyEnRepetitions = 4
   let initialEnglishPlaybackRate = 1
+  let initialRussianPlaybackRate = 1
   try {
     const raw = localStorage.getItem(UI_STATE_KEY)
     if (raw) {
@@ -61,8 +71,10 @@ export default function LinguaEcho() {
       initialLastCurrentId = p.lastCurrentId || ''
       const reps = Number(p.studyEnRepetitions)
       if (reps >= 1 && reps <= 10) initialStudyEnRepetitions = reps
-      const rate = Number(p.englishPlaybackRate)
-      if (rate >= 0.6 && rate <= 1.4) initialEnglishPlaybackRate = rate
+      const enRate = Number(p.englishPlaybackRate)
+      if (enRate >= 0.6 && enRate <= 1.4) initialEnglishPlaybackRate = enRate
+      const ruRate = Number(p.russianPlaybackRate)
+      if (ruRate >= 0.6 && ruRate <= 1.4) initialRussianPlaybackRate = ruRate
     }
   } catch {}
 
@@ -80,6 +92,7 @@ export default function LinguaEcho() {
   const [isFoldersManageOpen, setIsFoldersManageOpen] = useState(false)
   const [studyEnRepetitions, setStudyEnRepetitions] = useState(initialStudyEnRepetitions)
   const [englishPlaybackRate, setEnglishPlaybackRate] = useState(initialEnglishPlaybackRate)
+  const [russianPlaybackRate, setRussianPlaybackRate] = useState(initialRussianPlaybackRate)
 
   const FOLDERS_KEY = 'lingua-echo:folders'
 
@@ -182,10 +195,22 @@ export default function LinguaEcho() {
           loadAudioBuffer(t.id, 'ru'),
         ])
 
+        const enFromIdb = createObjectUrlFromBuffer(enLoaded)
+        const ruFromIdb = createObjectUrlFromBuffer(ruLoaded)
+
+        // Seed templates: IndexedDB holds only user-regenerated audio; bundled files come from lazy load.
+        if (isSeedTemplate(t.id)) {
+          return {
+            ...t,
+            enAudioUrl: enFromIdb,
+            ruAudioUrl: ruFromIdb,
+          }
+        }
+
         return {
           ...t,
-          enAudioUrl: createObjectUrlFromBuffer(enLoaded) ?? t.enAudioUrl,
-          ruAudioUrl: createObjectUrlFromBuffer(ruLoaded) ?? t.ruAudioUrl,
+          enAudioUrl: enFromIdb ?? t.enAudioUrl,
+          ruAudioUrl: ruFromIdb ?? t.ruAudioUrl,
         }
       })
     )
@@ -207,13 +232,13 @@ export default function LinguaEcho() {
         setCurrentId(initial[0]?.id ?? '')
         candidates = initial
       } else {
-        // По умолчанию показываем только 2 шаблона (пользователь попросил не перегружать 10-ю)
-        const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
-        // Seeds have no audio yet
-        setTemplates(seeded)
+        const seeded = createSeedDeck()
+        const ordered = seeded.map((t) => t.id)
+        const withAudio = applyLazySeedAudio(seeded, ordered, seeded[0].id)
+        setTemplates(withAudio)
         setCurrentId(seeded[0].id)
         saveTemplates(seeded)
-        candidates = seeded
+        candidates = withAudio
       }
 
       // Restore last viewed folder and template (if still exists)
@@ -309,20 +334,34 @@ export default function LinguaEcho() {
       const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
       localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, englishPlaybackRate }))
     } catch {}
-    setActiveStudySequencePlaybackRate(englishPlaybackRate)
+    setActiveStudySequenceEnglishRate(englishPlaybackRate)
   }, [englishPlaybackRate])
+
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, russianPlaybackRate }))
+    } catch {}
+    setActiveStudySequenceRussianRate(russianPlaybackRate)
+  }, [russianPlaybackRate])
 
   const handleEnglishPlaybackRateChange = useCallback((rate: number) => {
     setEnglishPlaybackRate(rate)
-    setActiveStudySequencePlaybackRate(rate)
+    setActiveStudySequenceEnglishRate(rate)
+  }, [])
+
+  const handleRussianPlaybackRateChange = useCallback((rate: number) => {
+    setRussianPlaybackRate(rate)
+    setActiveStudySequenceRussianRate(rate)
   }, [])
 
   const studySequenceOptions = useMemo(
     () => ({
       getEnglishRepetitions: () => studyEnRepetitions,
-      getPlaybackRate: () => englishPlaybackRate,
+      getEnglishPlaybackRate: () => englishPlaybackRate,
+      getRussianPlaybackRate: () => russianPlaybackRate,
     }),
-    [studyEnRepetitions, englishPlaybackRate]
+    [studyEnRepetitions, englishPlaybackRate, russianPlaybackRate]
   )
 
   const current = templates.find(t => t.id === currentId) || templates[0]
@@ -335,6 +374,13 @@ export default function LinguaEcho() {
   }, [customFolders])
 
   const filteredTemplates = useMemo(() => getFilteredFor(activeFolder), [activeFolder, templates])
+
+  // Lazy-load bundled seed audio for the active template (+ neighbors), unload the rest.
+  useEffect(() => {
+    if (!currentId || templates.length === 0) return
+    const orderedIds = filteredTemplates.map((t) => t.id)
+    setTemplates((prev) => applyLazySeedAudio(prev, orderedIds, currentId))
+  }, [currentId, filteredTemplates]) // eslint-disable-line react-hooks/exhaustive-deps -- only patch seed audio URLs
 
   const {
     isStudySequenceActive,
@@ -421,7 +467,7 @@ export default function LinguaEcho() {
   // Uses real Google Gemini (not pre-populated values). TTS uses ElevenLabs if key present.
   const handleGenerate = async () => {
     if (!settings.geminiKey) {
-      toast.error('Для генерации шаблонов с ИИ вставьте ключ Google Gemini в Настройках (бесплатный tier доступен).')
+      toast.error('Для генерации шаблонов с помощью ИИ вставьте ключ Google Gemini в Настройках (Бесплатного тарифа обычно хватает для большинства пользователей).')
       return
     }
 
@@ -454,7 +500,16 @@ export default function LinguaEcho() {
         if (settings.elevenKey) {
           try {
             enBlob = await generateAudio(g.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
-          } catch (e) { console.warn('EN ElevenLabs failed', e) }
+          } catch (e) {
+            if (isElevenLabsUserError(e)) {
+              toast.error(elevenLabsToastMessage(e), {
+                id: 'eleven-plan',
+                ...elevenLabsToastOptions(e),
+              })
+              throw e
+            }
+            console.warn('EN ElevenLabs failed', e)
+          }
         }
 
         const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
@@ -478,12 +533,20 @@ export default function LinguaEcho() {
       setIsGenerateOpen(false)
       const voiceNote = settings.elevenKey ? ' (английская озвучка — ElevenLabs)' : ''
       toast.success(`${final.length} новых шаблонов добавлено с помощью Gemini${voiceNote}.`)
-    } catch (err: any) {
+    } catch (err: unknown) {
       toast.dismiss('gen-progress')
-      toast.error(
-        err?.message || 'Ошибка генерации. Проверьте ключ Gemini или попробуйте ещё раз (иногда помогает повтор).',
-        { id: 'gen-error', duration: Infinity }
-      )
+      if (isElevenLabsUserError(err)) {
+        toast.error(elevenLabsToastMessage(err), {
+          id: 'gen-error',
+          ...elevenLabsToastOptions(err),
+        })
+      } else {
+        const msg = err instanceof Error ? err.message : ''
+        toast.error(
+          msg || 'Ошибка генерации. Проверьте ключ Gemini или попробуйте ещё раз (иногда помогает повтор).',
+          { id: 'gen-error', duration: Infinity }
+        )
+      }
     } finally {
       setIsGenerating(false)
       toast.dismiss('gen-progress')
@@ -497,23 +560,29 @@ export default function LinguaEcho() {
       return
     }
     try {
-      toast.loading('Перегенерируем английскую озвучку...', { id: 'regen' })
+      toast.loading('Перегенерируем английскую озвучку (ElevenLabs)...', { id: 'regen' })
       const enBlob = await generateAudio(tpl.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
 
-      const newEnUrl = enBlob ? URL.createObjectURL(enBlob) : tpl.enAudioUrl
-
-      // Persist the new audio bytes (replaces previous stored version)
-      if (enBlob) {
-        const enBuffer = await enBlob.arrayBuffer()
-        await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
+      if (!enBlob) {
+        toast.error('ElevenLabs не вернул аудио. Проверьте ключ и лимиты.', { id: 'regen' })
+        return
       }
 
-      if (tpl.enAudioUrl && tpl.enAudioUrl !== newEnUrl) { try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {} }
+      const newEnUrl = URL.createObjectURL(enBlob)
+      const enBuffer = await enBlob.arrayBuffer()
+      await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
+
+      if (tpl.enAudioUrl?.startsWith('blob:') && tpl.enAudioUrl !== newEnUrl) {
+        try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {}
+      }
 
       setTemplates(ts => ts.map(t => t.id === id ? { ...t, enAudioUrl: newEnUrl } : t))
-      toast.success('Аудио обновлено', { id: 'regen' })
-    } catch (e: any) {
-      toast.error(e?.message || 'Не удалось перегенерировать', { id: 'regen' })
+      toast.success('Английская озвучка обновлена (ElevenLabs)', { id: 'regen' })
+    } catch (e: unknown) {
+      toast.error(elevenLabsToastMessage(e), {
+        id: 'regen',
+        ...elevenLabsToastOptions(e),
+      })
     }
   }
 
@@ -805,14 +874,16 @@ export default function LinguaEcho() {
               <div className="flex gap-3 justify-center">
                 <button
                   onClick={() => {
-                    const seeded = SEED_TEMPLATES.slice(0, 2).map((t) => ({ ...t, folder: '' }))
-                    setTemplates(seeded)
+                    const seeded = createSeedDeck()
+                    const ordered = seeded.map((t) => t.id)
+                    const withAudio = applyLazySeedAudio(seeded, ordered, seeded[0].id)
+                    setTemplates(withAudio)
                     setCurrentId(seeded[0].id)
                     saveTemplates(seeded)
                   }}
                   className="rounded-xl bg-indigo-600 px-5 py-2 text-white"
                 >
-                  Вернуть 2 исходных
+                  Вернуть 10 исходных
                 </button>
                 <button
                   onClick={() => setIsGenerateOpen(true)}
@@ -878,16 +949,19 @@ export default function LinguaEcho() {
 
               {/* Russian label + small icon to the right of label, translation text below */}
               <div className="mt-4">
-                <div className="flex items-center gap-2">
-                  <div className="text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">РУССКИЙ ПЕРЕВОД</div>
-                  <RussianAudioButton
-                    fallbackText={current.ru}
-                    compact
-                    onManualPlayPause={onManualAudioInteraction}
-                    suspendAutoStopOnTextChange={isStudySequenceActive}
-                    playbackRate={englishPlaybackRate}
-                  />
+                <div className="mb-2 text-[11px] font-medium uppercase tracking-[1.5px] text-sky-600">
+                  РУССКИЙ ПЕРЕВОД
                 </div>
+                <RussianAudioButton
+                  fallbackText={current.ru}
+                  audioUrl={current.ruAudioUrl}
+                  compact
+                  showSpeedControls
+                  onManualPlayPause={onManualAudioInteraction}
+                  suspendAutoStopOnTextChange={isStudySequenceActive}
+                  playbackRate={russianPlaybackRate}
+                  onPlaybackRateChange={handleRussianPlaybackRateChange}
+                />
                 <div className="mt-1 text-xl sm:text-2xl leading-snug text-zinc-700 break-words">
                   {current.ru}
                 </div>
@@ -896,6 +970,7 @@ export default function LinguaEcho() {
               {/* English player (main waveform) — full width below */}
               <div className="mt-6">
                 <EnglishPlayer
+                  key={`${current.id}:${current.enAudioUrl ?? 'none'}`}
                   audioUrl={current.enAudioUrl}
                   fallbackText={current.en}
                   onRegenerate={() => handleRegenerateAudio(current.id)}
@@ -990,12 +1065,12 @@ export default function LinguaEcho() {
             <div className="mt-6 space-y-6 text-sm">
               {/* Gemini for template generation (key required) */}
               <div>
-                <label className="block font-medium text-slate-800">Ключ Google Gemini (для генерации шаблонов)</label>
+                <label className="block font-medium text-slate-800">Ключ Google Gemini (для генерации шаблонов, большой бесплатный месячный лимит, генерируется в один клик на сайте по ссылке ниже)</label>
                 <input
                   type="password"
                   value={settings.geminiKey}
                   onChange={e => setSettings(s => ({ ...s, geminiKey: e.target.value }))}
-                  placeholder="AIza..."
+                  placeholder="AQ..."
                   className="mt-1 w-full rounded-xl border px-4 py-2.5 font-mono text-sm"
                 />
                 <div className="mt-1 flex items-center gap-2">
@@ -1025,7 +1100,7 @@ export default function LinguaEcho() {
 
               {/* ElevenLabs for voice (primary) */}
               <div>
-                <label className="block font-medium text-slate-800">Ключ ElevenLabs (для английской озвучки)</label>
+                <label className="block font-medium text-slate-800">(ОПЦИОНАЛЬНО) Ключ ElevenLabs (для английской озвучки)</label>
                 <input
                   type="password"
                   value={settings.elevenKey}
@@ -1033,8 +1108,15 @@ export default function LinguaEcho() {
                   placeholder="sk_..."
                   className="mt-1 w-full rounded-xl border px-4 py-2.5 font-mono text-sm"
                 />
-                <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" className="text-xs text-indigo-600 underline">Получить ключ ElevenLabs</a>
-                <p className="mt-1 text-[11px] text-slate-600">Только для английской фразы (платный сервис). Русский перевод озвучивается браузером — бесплатно.</p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noreferrer" className="text-indigo-600 underline">Получить ключ</a>
+                  <a href="https://elevenlabs.io/app/subscription" target="_blank" rel="noreferrer" className="text-indigo-600 underline">Тарифы (от $6/мес)</a>
+                </div>
+                <p className="mt-1 text-[11px] leading-snug text-slate-600">
+                  Для API нужен платный план (бесплатный ключ без подписки не озвучивает). Starter — $6/мес.
+                  Можно отменить и перейти на Pay as you go — 10 000 кредитов/мес бесплатно.
+                  Русский у исходных шаблонов — встроенные файлы, без ElevenLabs.
+                </p>
               </div>
 
               <div className="text-[10px] text-slate-500 border-t pt-3">

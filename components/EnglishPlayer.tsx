@@ -111,6 +111,11 @@ export function EnglishPlayer({
     ws.on('ready', () => {
       setDuration(ws.getDuration())
       ws.setPlaybackRate(playbackRate)
+      const media = ws.getMediaElement() as HTMLMediaElement | undefined
+      if (media) {
+        media.volume = 1
+        media.muted = false
+      }
     })
 
     ws.on('timeupdate', (time: number) => {

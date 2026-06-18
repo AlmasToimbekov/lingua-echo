@@ -1,16 +1,20 @@
 import { Template } from './types'
+import { attachSeedAudio } from './seedAudio'
 import { isIOS, speakText } from './speechPlayback'
 
 let activeAudio: HTMLAudioElement | null = null
 let sharedAudio: HTMLAudioElement | null = null
+let unlockAudio: HTMLAudioElement | null = null
+let activeClipLang: 'en' | 'ru' | null = null
 
-// Tiny silent MP3 — played during the user tap to unlock iOS chained audio playback.
+// Tiny silent MP3 — unlock only, never used for real playback (avoids iOS volume ramp).
 const SILENT_MP3 =
   'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAHAAGf9AAAIAAANIAAAAQAAAaQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV'
 
 export type StudySequenceOptions = {
   getEnglishRepetitions: () => number
-  getPlaybackRate: () => number
+  getEnglishPlaybackRate: () => number
+  getRussianPlaybackRate: () => number
 }
 
 function getSharedAudio(): HTMLAudioElement {
@@ -26,15 +30,23 @@ function getSharedAudio(): HTMLAudioElement {
 /** Call synchronously inside the user tap that starts folder training (unlocks iOS audio). */
 export function primeStudySequenceAudio() {
   if (typeof window === 'undefined') return
-  const audio = getSharedAudio()
-  audio.src = SILENT_MP3
-  audio.play().catch(() => {})
-  audio.pause()
-  audio.currentTime = 0
+  if (!unlockAudio) {
+    unlockAudio = document.createElement('audio')
+    unlockAudio.setAttribute('playsinline', 'true')
+    unlockAudio.setAttribute('webkit-playsinline', 'true')
+  }
+  unlockAudio.volume = 0.001
+  unlockAudio.muted = false
+  unlockAudio.src = SILENT_MP3
+  unlockAudio.play().catch(() => {})
 }
 
-export function setActiveStudySequencePlaybackRate(rate: number) {
-  if (activeAudio) activeAudio.playbackRate = rate
+export function setActiveStudySequenceEnglishRate(rate: number) {
+  if (activeAudio && activeClipLang === 'en') activeAudio.playbackRate = rate
+}
+
+export function setActiveStudySequenceRussianRate(rate: number) {
+  if (activeAudio && activeClipLang === 'ru') activeAudio.playbackRate = rate
 }
 
 export function stopStudySequenceAudio() {
@@ -44,6 +56,7 @@ export function stopStudySequenceAudio() {
     activeAudio.load()
     activeAudio = null
   }
+  activeClipLang = null
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel()
   }
@@ -77,7 +90,12 @@ function playSpeech(
   return speakText(text, lang, signal, rate)
 }
 
-function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): Promise<void> {
+function playAudioUrl(
+  url: string,
+  signal: AbortSignal,
+  playbackRate: number,
+  lang: 'en' | 'ru'
+): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
       reject(new DOMException('Aborted', 'AbortError'))
@@ -86,6 +104,7 @@ function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): P
 
     const audio = getSharedAudio()
     activeAudio = audio
+    activeClipLang = lang
 
     let settled = false
     const finish = () => {
@@ -95,7 +114,10 @@ function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): P
       audio.onended = null
       audio.onerror = null
       audio.oncanplaythrough = null
-      if (activeAudio === audio) activeAudio = null
+      if (activeAudio === audio) {
+        activeAudio = null
+        activeClipLang = null
+      }
       resolve()
     }
 
@@ -103,13 +125,18 @@ function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): P
       audio.pause()
       audio.removeAttribute('src')
       audio.load()
-      if (activeAudio === audio) activeAudio = null
+      if (activeAudio === audio) {
+        activeAudio = null
+        activeClipLang = null
+      }
       reject(new DOMException('Aborted', 'AbortError'))
     }
     signal.addEventListener('abort', onAbort)
 
     const attemptPlay = (attempt = 0) => {
       if (signal.aborted || settled) return
+      audio.volume = 1
+      audio.muted = false
       audio.playbackRate = playbackRate
       audio
         .play()
@@ -132,6 +159,8 @@ function playAudioUrl(url: string, signal: AbortSignal, playbackRate: number): P
 
     audio.pause()
     audio.currentTime = 0
+    audio.volume = 1
+    audio.muted = false
     audio.src = url
     audio.load()
 
@@ -148,11 +177,25 @@ function playEnglish(
   signal: AbortSignal,
   getPlaybackRate: () => number
 ): Promise<void> {
+  const resolved = attachSeedAudio(template)
   const rate = getPlaybackRate()
-  if (template.enAudioUrl) {
-    return playAudioUrl(template.enAudioUrl, signal, rate)
+  if (resolved.enAudioUrl) {
+    return playAudioUrl(resolved.enAudioUrl, signal, rate, 'en')
   }
-  return playSpeech(template.en, 'en-US', signal, rate)
+  return playSpeech(resolved.en, 'en-US', signal, rate)
+}
+
+function playRussian(
+  template: Template,
+  signal: AbortSignal,
+  getPlaybackRate: () => number
+): Promise<void> {
+  const resolved = attachSeedAudio(template)
+  const rate = getPlaybackRate()
+  if (resolved.ruAudioUrl) {
+    return playAudioUrl(resolved.ruAudioUrl, signal, rate, 'ru')
+  }
+  return playSpeech(resolved.ru, 'ru-RU', signal, rate)
 }
 
 async function playTemplateSteps(
@@ -160,16 +203,14 @@ async function playTemplateSteps(
   signal: AbortSignal,
   options: StudySequenceOptions
 ) {
-  const getRate = options.getPlaybackRate
-
-  await playSpeech(template.ru, 'ru-RU', signal, getRate())
+  await playRussian(template, signal, options.getRussianPlaybackRate)
   await wait(1000, signal)
 
   let i = 0
   while (true) {
     const repetitions = Math.min(10, Math.max(1, options.getEnglishRepetitions()))
     if (i >= repetitions) break
-    await playEnglish(template, signal, getRate)
+    await playEnglish(template, signal, options.getEnglishPlaybackRate)
     i++
     if (i < Math.min(10, Math.max(1, options.getEnglishRepetitions()))) {
       await wait(700, signal)
@@ -177,7 +218,7 @@ async function playTemplateSteps(
   }
 
   await wait(1000, signal)
-  await playSpeech(template.ru, 'ru-RU', signal, getRate())
+  await playRussian(template, signal, options.getRussianPlaybackRate)
   await wait(1500, signal)
 }
 
@@ -193,7 +234,7 @@ export async function runStudySequence(
   let index = Math.max(0, Math.min(startIndex, templates.length - 1))
 
   while (!signal.aborted) {
-    const template = templates[index]
+    const template = attachSeedAudio(templates[index])
     onTemplateChange(template.id)
     await playTemplateSteps(template, signal, options)
     index = (index + 1) % templates.length

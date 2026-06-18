@@ -51,6 +51,11 @@ export async function loadAudioBuffer(
   return record ? { buffer: record.buffer, contentType: record.contentType } : null
 }
 
+export async function deleteAudioBuffer(templateId: string, lang: 'en' | 'ru') {
+  const db = await getDB()
+  await db.delete('audio', makeKey(templateId, lang))
+}
+
 export async function deleteAudioForTemplate(templateId: string) {
   const db = await getDB()
   const tx = db.transaction('audio', 'readwrite')

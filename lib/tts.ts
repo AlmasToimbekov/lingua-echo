@@ -2,6 +2,8 @@
 // Primary: ElevenLabs (natural American English only — saves paid tokens).
 // Russian uses browser speechSynthesis in RussianAudioButton.
 
+import { parseElevenLabsError } from './elevenLabsErrors'
+
 export type TTSProvider = 'elevenlabs' | 'browser'
 
 export interface TTSOptions {
@@ -45,7 +47,7 @@ export async function generateAudio(
 
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
-      throw new Error(`ElevenLabs TTS error: ${res.status} ${errText}`)
+      throw parseElevenLabsError(res.status, errText)
     }
 
     return await res.blob()
