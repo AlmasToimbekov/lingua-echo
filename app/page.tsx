@@ -19,6 +19,10 @@ import {
   elevenLabsToastOptions,
   isElevenLabsUserError,
 } from '../lib/elevenLabsErrors'
+import {
+  geminiToastMessage,
+  geminiToastOptions,
+} from '../lib/geminiErrors'
 import { generateAudio } from '../lib/tts'
 import { listAvailableModels } from '../lib/gemini'
 import { EnglishPlayer } from '../components/EnglishPlayer'
@@ -476,10 +480,25 @@ export default function LinguaEcho() {
     const topic = genCustomTopic.trim() || genTopic
     const maxWords = COMPLEXITIES[genComplexity].maxWords
     const count = Math.min(Math.max(1, genCount), 20)
+    const batchId = String(Date.now())
+    const newItemFolder = (activeFolder && activeFolder !== 'learned') ? activeFolder : ''
+    const final: Template[] = []
+
+    const commitFinal = (note?: string) => {
+      if (final.length === 0) return
+      const updated = [...templates, ...final]
+      setTemplates(updated)
+      setCurrentId(final[0].id)
+      setIsGenerateOpen(false)
+      const voiceNote = settings.elevenKey ? ' (английская озвучка — ElevenLabs)' : ''
+      toast.success(
+        `${final.length} шаблонов добавлено${voiceNote}.${note ? ` ${note}` : ''}`,
+        { id: 'gen-partial-save', duration: 8000 }
+      )
+    }
 
     try {
-      // 1. Gemini for the text templates (key required)
-      const generated = await (await import('../lib/gemini')).generateTemplates({
+      const { items: generated, requested, partial } = await (await import('../lib/gemini')).generateTemplates({
         topic,
         maxWords,
         count,
@@ -487,11 +506,20 @@ export default function LinguaEcho() {
         isAdult: genIsAdult,
       })
 
-      // 2. TTS audio (ElevenLabs if key, else browser fallback). Sequential.
-      const final: Template[] = []
+      if (generated.length === 0) {
+        throw new Error('Gemini не вернул ни одного шаблона. Попробуйте меньшее количество или повторите позже.')
+      }
+
+      if (partial) {
+        toast.warning(
+          `Gemini вернул ${generated.length} из ${requested} текстов (сервер был перегружен). Озвучиваем готовые…`,
+          { id: 'gen-partial-text', duration: 10000, className: 'whitespace-pre-line !max-w-md text-sm leading-snug' }
+        )
+      }
+
       for (let i = 0; i < generated.length; i++) {
         const g = generated[i]
-        const id = 'gen-' + Date.now() + '-' + i
+        const id = `gen-${batchId}-${i}`
 
         toast.loading(`Генерируем аудио ${i + 1} из ${generated.length}...`, { id: 'gen-progress' })
 
@@ -502,11 +530,12 @@ export default function LinguaEcho() {
             enBlob = await generateAudio(g.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
           } catch (e) {
             if (isElevenLabsUserError(e)) {
+              commitFinal()
               toast.error(elevenLabsToastMessage(e), {
-                id: 'eleven-plan',
+                id: 'gen-error',
                 ...elevenLabsToastOptions(e),
               })
-              throw e
+              return
             }
             console.warn('EN ElevenLabs failed', e)
           }
@@ -514,38 +543,33 @@ export default function LinguaEcho() {
 
         const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
 
-        // Persist the actual audio bytes so they survive page refresh (Phase 2)
         if (enBlob) {
           const enBuffer = await enBlob.arrayBuffer()
           await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
         }
 
-        // Inherit current custom/active folder for new items (unless viewing learned)
-        const newItemFolder = (activeFolder && activeFolder !== 'learned') ? activeFolder : ''
         final.push({ id, en: g.en, ru: g.ru, enAudioUrl, folder: newItemFolder })
       }
       toast.dismiss('gen-progress')
 
-      const updated = [...templates, ...final]
-      setTemplates(updated)
-      setCurrentId(final[0].id)
-
-      setIsGenerateOpen(false)
-      const voiceNote = settings.elevenKey ? ' (английская озвучка — ElevenLabs)' : ''
-      toast.success(`${final.length} новых шаблонов добавлено с помощью Gemini${voiceNote}.`)
+      commitFinal(partial ? 'Тексты получены частично — можно сгенерировать остальные позже.' : undefined)
     } catch (err: unknown) {
       toast.dismiss('gen-progress')
+
+      if (final.length > 0) {
+        commitFinal('Генерация прервалась — сохранили уже готовые шаблоны.')
+      }
+
       if (isElevenLabsUserError(err)) {
         toast.error(elevenLabsToastMessage(err), {
           id: 'gen-error',
           ...elevenLabsToastOptions(err),
         })
       } else {
-        const msg = err instanceof Error ? err.message : ''
-        toast.error(
-          msg || 'Ошибка генерации. Проверьте ключ Gemini или попробуйте ещё раз (иногда помогает повтор).',
-          { id: 'gen-error', duration: Infinity }
-        )
+        toast.error(geminiToastMessage(err), {
+          id: 'gen-error',
+          ...geminiToastOptions(err),
+        })
       }
     } finally {
       setIsGenerating(false)
