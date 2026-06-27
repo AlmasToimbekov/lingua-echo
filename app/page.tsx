@@ -623,13 +623,27 @@ export default function LinguaEcho() {
       toast('Для перегенерации озвучки нужен ключ ElevenLabs в Настройках')
       return
     }
+
+    const useRussianTts = settings.generateRussianTts !== false
+
     try {
-      toast.loading('Перегенерируем английскую озвучку (ElevenLabs)...', { id: 'regen' })
+      toast.loading(
+        useRussianTts
+          ? 'Перегенерируем озвучку EN + RU (ElevenLabs)...'
+          : 'Перегенерируем английскую озвучку (ElevenLabs)...',
+        { id: 'regen' }
+      )
+
       const enBlob = await generateAudio(tpl.en, 'en', { provider: 'elevenlabs', apiKey: settings.elevenKey })
 
       if (!enBlob) {
         toast.error('ElevenLabs не вернул аудио. Проверьте ключ и лимиты.', { id: 'regen' })
         return
+      }
+
+      let ruBlob: Blob | null = null
+      if (useRussianTts) {
+        ruBlob = await generateAudio(tpl.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
       }
 
       const newEnUrl = URL.createObjectURL(enBlob)
@@ -640,8 +654,32 @@ export default function LinguaEcho() {
         try { URL.revokeObjectURL(tpl.enAudioUrl) } catch {}
       }
 
-      setTemplates(ts => ts.map(t => t.id === id ? { ...t, enAudioUrl: newEnUrl } : t))
-      toast.success('Английская озвучка обновлена (ElevenLabs)', { id: 'regen' })
+      let newRuUrl: string | undefined
+      if (ruBlob) {
+        newRuUrl = URL.createObjectURL(ruBlob)
+        const ruBuffer = await ruBlob.arrayBuffer()
+        await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
+
+        if (tpl.ruAudioUrl?.startsWith('blob:') && tpl.ruAudioUrl !== newRuUrl) {
+          try { URL.revokeObjectURL(tpl.ruAudioUrl) } catch {}
+        }
+      }
+
+      setTemplates(ts => ts.map(t => {
+        if (t.id !== id) return t
+        return {
+          ...t,
+          enAudioUrl: newEnUrl,
+          ...(newRuUrl ? { ruAudioUrl: newRuUrl } : {}),
+        }
+      }))
+
+      toast.success(
+        useRussianTts && newRuUrl
+          ? 'Озвучка EN + RU обновлена (ElevenLabs)'
+          : 'Английская озвучка обновлена (ElevenLabs)',
+        { id: 'regen' }
+      )
     } catch (e: unknown) {
       toast.error(elevenLabsToastMessage(e), {
         id: 'regen',
