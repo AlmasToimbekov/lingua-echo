@@ -40,6 +40,7 @@ const UI_STATE_KEY = 'lingua-echo:ui'
 type Settings = {
   geminiKey: string   // required for AI template generation (Google Gemini free tier)
   elevenKey: string   // primary for natural TTS voice
+  generateRussianTts?: boolean // default true — ElevenLabs RU during template generation
 }
 
 const TOPICS = [
@@ -61,6 +62,7 @@ const COMPLEXITIES = [
 export default function LinguaEcho() {
   // Load persisted UI state early (custom topic, last folder and current template)
   let initialGenCustomTopic = ''
+  let initialGenIsAdult = false
   let initialActiveFolder = ''
   let initialLastCurrentId = ''
   let initialStudyEnRepetitions = 4
@@ -71,6 +73,7 @@ export default function LinguaEcho() {
     if (raw) {
       const p = JSON.parse(raw)
       initialGenCustomTopic = p.genCustomTopic || ''
+      initialGenIsAdult = !!p.genIsAdult
       initialActiveFolder = p.activeFolder || ''
       initialLastCurrentId = p.lastCurrentId || ''
       const reps = Number(p.studyEnRepetitions)
@@ -84,7 +87,7 @@ export default function LinguaEcho() {
 
   const [templates, setTemplates] = useState<Template[]>([])
   const [currentId, setCurrentId] = useState<string>('')
-  const [settings, setSettings] = useState<Settings>({ geminiKey: '', elevenKey: '' })
+  const [settings, setSettings] = useState<Settings>({ geminiKey: '', elevenKey: '', generateRussianTts: true })
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isGenerateOpen, setIsGenerateOpen] = useState(false)
 
@@ -169,7 +172,7 @@ export default function LinguaEcho() {
   const [genCustomTopic, setGenCustomTopic] = useState(initialGenCustomTopic)
   const [genComplexity, setGenComplexity] = useState(1)
   const [genCount, setGenCount] = useState(2)
-  const [genIsAdult, setGenIsAdult] = useState(false)
+  const [genIsAdult, setGenIsAdult] = useState(initialGenIsAdult)
   const [isGenerating, setIsGenerating] = useState(false)
 
   // Nice modal for folder name input (replaces ugly native prompt for create/rename)
@@ -264,6 +267,7 @@ export default function LinguaEcho() {
           setSettings({
             geminiKey: parsed.geminiKey || parsed.xaiKey || '',
             elevenKey: parsed.elevenKey || '',
+            generateRussianTts: parsed.generateRussianTts !== false,
           })
         }
       } catch {}
@@ -311,6 +315,13 @@ export default function LinguaEcho() {
       localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, genCustomTopic }))
     } catch {}
   }, [genCustomTopic])
+
+  useEffect(() => {
+    try {
+      const cur = JSON.parse(localStorage.getItem(UI_STATE_KEY) || '{}')
+      localStorage.setItem(UI_STATE_KEY, JSON.stringify({ ...cur, genIsAdult }))
+    } catch {}
+  }, [genIsAdult])
 
   useEffect(() => {
     try {
@@ -490,7 +501,11 @@ export default function LinguaEcho() {
       setTemplates(updated)
       setCurrentId(final[0].id)
       setIsGenerateOpen(false)
-      const voiceNote = settings.elevenKey ? ' (английская озвучка — ElevenLabs)' : ''
+      const voiceNote = settings.elevenKey
+        ? settings.generateRussianTts !== false
+          ? ' (озвучка EN + RU — ElevenLabs)'
+          : ' (английская озвучка — ElevenLabs)'
+        : ''
       toast.success(
         `${final.length} шаблонов добавлено${voiceNote}.${note ? ` ${note}` : ''}`,
         { id: 'gen-partial-save', duration: 8000 }
@@ -524,6 +539,8 @@ export default function LinguaEcho() {
         toast.loading(`Генерируем аудио ${i + 1} из ${generated.length}...`, { id: 'gen-progress' })
 
         let enBlob: Blob | null = null
+        let ruBlob: Blob | null = null
+        const useRussianTts = settings.elevenKey && settings.generateRussianTts !== false
 
         if (settings.elevenKey) {
           try {
@@ -539,16 +556,38 @@ export default function LinguaEcho() {
             }
             console.warn('EN ElevenLabs failed', e)
           }
+
+          if (useRussianTts) {
+            try {
+              ruBlob = await generateAudio(g.ru, 'ru', { provider: 'elevenlabs', apiKey: settings.elevenKey })
+            } catch (e) {
+              if (isElevenLabsUserError(e)) {
+                commitFinal()
+                toast.error(elevenLabsToastMessage(e), {
+                  id: 'gen-error',
+                  ...elevenLabsToastOptions(e),
+                })
+                return
+              }
+              console.warn('RU ElevenLabs failed', e)
+            }
+          }
         }
 
         const enAudioUrl = enBlob ? URL.createObjectURL(enBlob) : undefined
+        const ruAudioUrl = ruBlob ? URL.createObjectURL(ruBlob) : undefined
 
         if (enBlob) {
           const enBuffer = await enBlob.arrayBuffer()
           await saveAudioBuffer(id, 'en', enBuffer, enBlob.type || 'audio/mpeg')
         }
 
-        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, folder: newItemFolder })
+        if (ruBlob) {
+          const ruBuffer = await ruBlob.arrayBuffer()
+          await saveAudioBuffer(id, 'ru', ruBuffer, ruBlob.type || 'audio/mpeg')
+        }
+
+        final.push({ id, en: g.en, ru: g.ru, enAudioUrl, ruAudioUrl, folder: newItemFolder })
       }
       toast.dismiss('gen-progress')
 
@@ -1124,7 +1163,7 @@ export default function LinguaEcho() {
 
               {/* ElevenLabs for voice (primary) */}
               <div>
-                <label className="block font-medium text-slate-800">(ОПЦИОНАЛЬНО) Ключ ElevenLabs (для английской озвучки)</label>
+                <label className="block font-medium text-slate-800">(ОПЦИОНАЛЬНО) Ключ ElevenLabs (для естественной озвучки)</label>
                 <input
                   type="password"
                   value={settings.elevenKey}
@@ -1139,8 +1178,23 @@ export default function LinguaEcho() {
                 <p className="mt-1 text-[11px] leading-snug text-slate-600">
                   Для API нужен платный план (бесплатный ключ без подписки не озвучивает). Starter — $6/мес.
                   Можно отменить и перейти на Pay as you go — 10 000 кредитов/мес бесплатно.
+                  При генерации шаблонов по умолчанию озвучиваются и английский, и русский.
                   Русский у исходных шаблонов — встроенные файлы, без ElevenLabs.
                 </p>
+                <label className="mt-3 flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.generateRussianTts !== false}
+                    onChange={e => setSettings(s => ({ ...s, generateRussianTts: e.target.checked }))}
+                    className="mt-0.5 h-4 w-4 accent-indigo-600"
+                  />
+                  <span className="text-sm leading-snug text-slate-800">
+                    Озвучивать русский при генерации шаблонов (ElevenLabs)
+                    <span className="block text-[11px] font-normal text-slate-500">
+                      Снимите галочку, чтобы экономить токены — русский останется через браузерный синтез.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               <div className="text-[10px] text-slate-500 border-t pt-3">

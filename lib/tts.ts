@@ -1,6 +1,6 @@
 // Unified TTS layer for MVP.
-// Primary: ElevenLabs (natural American English only — saves paid tokens).
-// Russian uses browser speechSynthesis in RussianAudioButton.
+// Primary: ElevenLabs (natural EN + RU for generated templates when key is set).
+// Without a key or when RU is disabled in settings, RussianAudioButton falls back to browser speechSynthesis.
 
 import { parseElevenLabsError } from './elevenLabsErrors'
 
