@@ -191,15 +191,17 @@ export async function generateTemplates(params: {
   count: number
   apiKey: string
   isAdult?: boolean
+  /** Existing English sentences to avoid duplicating (e.g. templates already in the deck). */
+  avoidEn?: string[]
 }): Promise<GenerateTemplatesResult> {
-  const { count } = params
+  const { count, avoidEn: existingAvoidEn = [] } = params
   const all: GeneratedTemplate[] = []
   let remaining = count
   let partial = false
 
   while (remaining > 0) {
     const chunkCount = Math.min(CHUNK_SIZE, remaining)
-    const avoidEn = all.map((t) => t.en)
+    const avoidEn = Array.from(new Set([...existingAvoidEn, ...all.map((t) => t.en)]))
 
     try {
       const chunk = await withGeminiRetries(() =>

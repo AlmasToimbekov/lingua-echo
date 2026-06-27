@@ -519,6 +519,7 @@ export default function LinguaEcho() {
         count,
         apiKey: settings.geminiKey,
         isAdult: genIsAdult,
+        avoidEn: templates.map(t => t.en),
       })
 
       if (generated.length === 0) {
